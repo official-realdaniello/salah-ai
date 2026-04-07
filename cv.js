@@ -123,9 +123,9 @@ function createCvSampleForm() {
       email: "mariam.abusalam@example.com",
       phone: "+970 59 123 4567",
       location: "Gaza, Palestine",
-      linkedInUrl: "linkedin.com/in/mariam-abusalam",
-      githubUrl: "github.com/mariamabusalam",
-      portfolioUrl: "mariamabusalam.dev"
+      linkedInUrl: "https://linkedin.com/in/mariam-abusalam",
+      githubUrl: "https://github.com/mariamabusalam",
+      portfolioUrl: "https://mariamabusalam.dev"
     },
     summary: "Final-year computer science student focused on frontend development, accessible interfaces, and practical student-facing products. Looking for an entry-level software role where I can contribute clean code, strong communication, and steady product thinking.",
     education: [
