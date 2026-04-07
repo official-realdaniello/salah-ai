@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Salah's AI favicon">
+  <defs>
+    <linearGradient id="bg" x1="18" y1="14" x2="110" y2="114" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#18232f"/>
+      <stop offset="1" stop-color="#0d131a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="32" y1="28" x2="86" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d7ebff"/>
+      <stop offset="1" stop-color="#8fb6dc"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="108" height="108" rx="28" fill="url(#bg)"/>
+  <path d="M83 31C76 24 66 21 54 21C37 21 26 29 26 43C26 55 34 61 47 64L67 69C77 72 81 77 81 85C81 96 71 104 55 104C44 104 34 100 27 92" fill="none" stroke="url(#accent)" stroke-linecap="round" stroke-linejoin="round" stroke-width="12"/>
+  <g transform="translate(71 22)">
+    <line x1="14" y1="0" x2="14" y2="7" stroke="#9ec7ef" stroke-linecap="round" stroke-width="4"/>
+    <circle cx="14" cy="0" r="3.2" fill="#d7ebff"/>
+    <rect x="1.5" y="8" width="25" height="21" rx="6" fill="#111922" stroke="#9ec7ef" stroke-width="3"/>
+    <circle cx="10" cy="18.5" r="2.4" fill="#d7ebff"/>
+    <circle cx="18" cy="18.5" r="2.4" fill="#d7ebff"/>
+    <path d="M9 25C10.5 26.4 12.3 27.1 14 27.1C15.7 27.1 17.5 26.4 19 25" fill="none" stroke="#8fb6dc" stroke-linecap="round" stroke-width="2"/>
+  </g>
+</svg>

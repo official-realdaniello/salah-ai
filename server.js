@@ -95,7 +95,7 @@ function isAllowedStaticPath(fileName) {
   if (PAGE_FILES.has(fileName)) {
     return true;
   }
-  if (!fileName.startsWith("assets/")) {
+  if (!fileName.startsWith("")) {
     return false;
   }
   return fileName.split("/").every((segment) => segment && !segment.startsWith("."));

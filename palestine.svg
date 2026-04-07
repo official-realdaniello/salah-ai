@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40" role="img" aria-labelledby="title">
+  <title>Palestine flag</title>
+  <rect width="60" height="13.333" y="0" fill="#111111"/>
+  <rect width="60" height="13.334" y="13.333" fill="#ffffff"/>
+  <rect width="60" height="13.333" y="26.667" fill="#007a3d"/>
+  <path d="M0 0 24 20 0 40Z" fill="#ce1126"/>
+</svg>

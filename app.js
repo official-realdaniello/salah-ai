@@ -1778,8 +1778,8 @@ function renderShell() {
     </a>
   `).join("");
   const nextLanguageFlag = state.ui.lang === "en"
-    ? { src: "/assets/flags/palestine.svg", label: uiWord("Switch to Arabic", "التبديل إلى العربية") }
-    : { src: "/assets/flags/us.svg", label: uiWord("Switch to English", "التبديل إلى الإنجليزية") };
+    ? { src: "palestine.svg", label: uiWord("Switch to Arabic", "التبديل إلى العربية") }
+    : { src: "us.svg", label: uiWord("Switch to English", "التبديل إلى الإنجليزية") };
 
   document.getElementById("app").innerHTML = `
     <div class="site-shell">
