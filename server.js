@@ -10,8 +10,8 @@ const ROOT = __dirname;
 const execFileAsync = promisify(execFile);
 loadLocalEnv(path.join(ROOT, ".env"));
 
-const HOST = process.env.HOST || "127.0.0.1";
-const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || "0.0.0.0";
+const PORT = Number(process.env.PORT || 10000);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
