@@ -85,10 +85,10 @@ const PAGE_FILES = new Set([
   "exam.html",
   "progress.html",
   "styles.css",
-  "scripts/bootstrap.js",
-  "scripts/cv.js",
-  "scripts/ieee.js",
-  "scripts/app.js"
+  "bootstrap.js",
+  "cv.js",
+  "ieee.js",
+  "app.js"
 ]);
 
 function isAllowedStaticPath(fileName) {
