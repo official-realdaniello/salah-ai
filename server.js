@@ -2219,7 +2219,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Salah's AI is running at http://${HOST}:${PORT}`);
+  console.log(`Salah's AI is running on port ${PORT}`);
 });
 
 module.exports = server;
