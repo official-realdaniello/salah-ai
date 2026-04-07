@@ -10,7 +10,6 @@ const ROOT = __dirname;
 const execFileAsync = promisify(execFile);
 loadLocalEnv(path.join(ROOT, ".env"));
 
-const HOST = "0.0.0.0";
 const PORT = Number(process.env.PORT || 10000);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
@@ -2219,7 +2218,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
+server.listen(PORT, () => {
   console.log(`Salah's AI is running at http://${HOST}:${PORT}`);
 });
 
