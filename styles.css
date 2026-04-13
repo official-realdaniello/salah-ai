@@ -564,6 +564,39 @@ html[data-theme="light"] .surface {
   font-size: 1.2rem;
 }
 
+.info-modal {
+  width: min(720px, calc(100vw - 2rem));
+  gap: 1rem;
+}
+
+.info-copy,
+.info-provider-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.info-link {
+  justify-self: start;
+}
+
+.provider-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.2rem;
+  padding: 0.48rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-soft);
+  background: rgba(255, 255, 255, 0.03);
+  overflow-wrap: anywhere;
+}
+
+.info-provider-list {
+  grid-template-columns: repeat(auto-fit, minmax(132px, max-content));
+  align-items: start;
+}
+
 .confirm-modal {
   width: min(520px, calc(100vw - 2rem));
   gap: 1rem;

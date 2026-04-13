@@ -21,6 +21,22 @@ const pages = [
   { key: "ieee", href: "ieee.html", icon: "10" }
 ];
 
+const AI_PROVIDER_NAMES = [
+  "Gemini",
+  "OpenAI / ChatGPT",
+  "Groq",
+  "DeepSeek",
+  "Together AI",
+  "xAI",
+  "Eden AI",
+  "Pixazo",
+  "Runway",
+  "Fal",
+  "Pollinations"
+];
+
+const REPOSITORY_URL = "https://github.com/official-realdaniello/salah-ai";
+
 const copy = {
   en: {
     brand: "Salah's AI",
@@ -1647,6 +1663,52 @@ function renderSettingsPanel() {
   `;
 }
 
+function renderProjectInfoPanel() {
+  if (runtime.panel !== "projectInfo") {
+    return "";
+  }
+
+  const infoTitle = uiWord("Demo Info", "معلومات النسخة التجريبية");
+  const infoLead = uiWord(
+    "The demo site itself works properly. The main limitation is the shared free-tier API keys used on the public demo.",
+    "الموقع التجريبي نفسه يعمل بشكل ممتاز، لكن المشكلة الأساسية هي حدود مفاتيح API المجانية المشتركة في النسخة العامة."
+  );
+  const infoHost = uiWord(
+    "You can host the project yourself by following the README steps in this repository.",
+    "تقدر تستضيف المشروع بنفسك باتباع الخطوات الموجودة في README داخل هذا المستودع."
+  );
+  const infoKeys = uiWord(
+    "Then add your own paid API keys for the smoothest experience with these providers:",
+    "بعدها أضف مفاتيح API المدفوعة الخاصة بك لتحصل على أفضل تجربة مع هذه الخدمات:"
+  );
+  const repoLabel = uiWord("Open Repository", "افتح المستودع");
+  const closeLabel = uiWord("Close", "إغلاق");
+
+  return `
+    <div class="modal-overlay" id="projectInfoOverlay" role="presentation">
+      <button class="modal-backdrop" id="projectInfoBackdrop" type="button" aria-label="${escapeHtml(closeLabel)}"></button>
+      <section class="surface settings-panel settings-modal info-modal" id="projectInfoPanel" role="dialog" aria-modal="true" aria-labelledby="projectInfoTitle">
+        <div class="settings-head">
+          <h2 class="panel-title" id="projectInfoTitle">${escapeHtml(infoTitle)}</h2>
+          <button class="icon-button modal-close" id="projectInfoClose" type="button" aria-label="${escapeHtml(closeLabel)}">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="info-copy">
+          <p class="muted-line">${escapeHtml(infoLead)}</p>
+          <p class="muted-line">${escapeHtml(infoHost)}</p>
+          <a class="button button--soft info-link" href="${REPOSITORY_URL}" target="_blank" rel="noreferrer noopener">${escapeHtml(repoLabel)}</a>
+          <div class="rail-divider"></div>
+          <p class="muted-line">${escapeHtml(infoKeys)}</p>
+          <div class="info-provider-list">
+            ${AI_PROVIDER_NAMES.map((provider) => `<span class="provider-pill">${escapeHtml(provider)}</span>`).join("")}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function renderConfirmModal() {
   if (!runtime.confirm) {
     return "";
@@ -1831,6 +1893,10 @@ function renderShell() {
             <span class="status-dot"></span>
             <span>${escapeHtml(state.api.aiEnabled ? read("online") : read("offline"))}</span>
           </span>
+          <button class="toggle-button toggle-button--icon" id="projectInfoToggle" type="button" aria-haspopup="dialog" aria-expanded="${runtime.panel === "projectInfo"}" aria-label="${escapeHtml(uiWord("Open demo info", "افتح معلومات النسخة التجريبية"))}">
+            <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
+            <span class="sr-only">${escapeHtml(uiWord("Demo info", "معلومات النسخة التجريبية"))}</span>
+          </button>
           <button class="toggle-button toggle-button--icon" id="settingsToggle" type="button" aria-haspopup="dialog" aria-expanded="${runtime.panel === "settings"}" aria-label="${escapeHtml(uiWord("Open settings", "افتح الإعدادات"))}">
             <i class="fa-solid fa-gear" aria-hidden="true"></i>
             <span class="sr-only">${escapeHtml(uiWord("Settings", "الإعدادات"))}</span>
@@ -1844,6 +1910,7 @@ function renderShell() {
         </div>
       </header>
       ${renderSettingsPanel()}
+      ${renderProjectInfoPanel()}
       ${renderConfirmModal()}
       <main class="page" id="pageRoot" tabindex="-1"></main>
       ${renderFooter()}
@@ -3790,6 +3857,18 @@ async function handleImagesForm(event) {
 }
 
 function bindSharedEvents() {
+  document.getElementById("projectInfoToggle")?.addEventListener("click", () => {
+    runtime.panel = runtime.panel === "projectInfo" ? "" : "projectInfo";
+    renderApp();
+  });
+  document.getElementById("projectInfoClose")?.addEventListener("click", () => {
+    runtime.panel = "";
+    renderApp();
+  });
+  document.getElementById("projectInfoBackdrop")?.addEventListener("click", () => {
+    runtime.panel = "";
+    renderApp();
+  });
   document.getElementById("settingsToggle")?.addEventListener("click", () => {
     runtime.panel = runtime.panel === "settings" ? "" : "settings";
     renderApp();
