@@ -220,9 +220,9 @@ const copy = {
 
 const homeText = {
   en: {
-    eyebrow: "Full-screen, calmer, and page-based.",
+    eyebrow: "",
     title: "A smoother AI study platform for Palestinian students.",
-    subtitle: "Tutor, coding, notes, exams, planner, and images now live in cleaner dedicated pages with lighter spacing and calmer motion.",
+    subtitle: "Tutor, coding, notes, exams, planner, and images in one place.",
     primary: "Open Tutor",
     secondary: "Open Coding",
     cards: [
@@ -235,9 +235,9 @@ const homeText = {
     ]
   },
   ar: {
-    eyebrow: "واجهة أهدأ، ممتدة، وبصفحات مستقلة.",
+    eyebrow: "",
     title: "منصة دراسة أذكى وأكثر سلاسة للطلبة الفلسطينيين.",
-    subtitle: "المعلم والبرمجة والملاحظات والاختبارات والخطة والصور أصبحت في صفحات أوضح بمسافات أخف وحركة أنعم.",
+    subtitle: "المعلم والبرمجة والملاحظات والاختبارات والخطة والصور في مكان واحد.",
     primary: "افتح المعلم",
     secondary: "افتح البرمجة",
     cards: [
@@ -1864,7 +1864,7 @@ function renderHomePage() {
   const section = homeText[state.ui.lang];
   return `
     <section class="hero glass hero--home">
-      <p class="eyebrow">${escapeHtml(section.eyebrow)}</p>
+      ${section.eyebrow ? `<p class="eyebrow">${escapeHtml(section.eyebrow)}</p>` : ""}
       <h1 class="page-title">${escapeHtml(section.title)}</h1>
       <p class="page-subtitle">${escapeHtml(section.subtitle)}</p>
       <div class="hero-actions hero-actions--bottom">
@@ -2467,10 +2467,19 @@ function renderImagesResult() {
     return renderInlineEmpty(read("emptyImages"));
   }
 
+  const resultTitle = state.images.result.providerLabel
+    ? uiWord(`Generated with ${state.images.result.providerLabel}`, `تم الإنشاء باستخدام ${state.images.result.providerLabel}`)
+    : uiWord("Generated image", "الصورة المُنشأة");
+
   return `
     <section class="content-block">
       <div class="image-preview-frame">
-        <img class="image-preview" src="${state.images.result.imageDataUrl}" alt="Generated image">
+        <div class="image-preview-head">
+          <p class="section-label image-preview-title">${escapeHtml(resultTitle)}</p>
+        </div>
+        <div class="image-preview-media">
+          <img class="image-preview" src="${state.images.result.imageDataUrl}" alt="Generated image">
+        </div>
       </div>
     </section>
     <section class="content-block">
@@ -2507,6 +2516,7 @@ function renderImagesPage() {
           <div class="form-row">
             <button class="button button--primary" id="imagesSubmit" type="submit" ${(!state.api.aiEnabled || runtime.busy.images) ? "disabled" : ""}>${escapeHtml(read("generate"))}</button>
             <button class="button button--soft" id="imagesClear" type="button">${escapeHtml(read("clear"))}</button>
+            <button class="button button--soft" id="imagesDownloadToolbar" type="button" ${(!state.images.result?.imageDataUrl || runtime.busy.images) ? "disabled" : ""}>${escapeHtml(uiWord("Download", "تنزيل"))}</button>
           </div>
         </form>
       </article>
@@ -4117,7 +4127,33 @@ function bindPlannerEvents() {
   });
 }
 
+function syncImagesResultLayout() {
+  const toolbarDownloadButton = document.getElementById("imagesDownloadToolbar");
+  if (toolbarDownloadButton) {
+    toolbarDownloadButton.disabled = !state.images.result?.imageDataUrl || runtime.busy.images;
+  }
+
+  const legacyDownloadButton = document.getElementById("imagesDownload");
+  legacyDownloadButton?.closest(".content-block")?.remove();
+
+  const providerLabel = String(state.images.result?.providerLabel || "").trim();
+  if (!providerLabel) {
+    return;
+  }
+
+  document.querySelectorAll(".output-panel .content-block .muted-line").forEach((node) => {
+    const text = String(node.textContent || "").trim();
+    if (!text) {
+      return;
+    }
+    if (text.includes(providerLabel) && (text.startsWith("Generated with") || text.startsWith("تم الإنشاء باستخدام"))) {
+      node.closest(".content-block")?.remove();
+    }
+  });
+}
+
 function bindImagesEvents() {
+  syncImagesResultLayout();
   document.getElementById("imagesForm")?.addEventListener("submit", handleImagesForm);
   document.getElementById("imagesPrompt")?.addEventListener("input", (event) => {
     const nextPrompt = String(event.target.value || "");
@@ -4139,7 +4175,7 @@ function bindImagesEvents() {
     }
     persist();
   });
-  document.getElementById("imagesDownload")?.addEventListener("click", () => {
+  const handleImagesDownload = () => {
     if (!state.images.result?.imageDataUrl) {
       return;
     }
@@ -4147,7 +4183,9 @@ function bindImagesEvents() {
       state.images.result.imageDataUrl,
       imageDownloadFileName(state.images.result, state.images.lastInput.prompt)
     );
-  });
+  };
+  document.getElementById("imagesDownload")?.addEventListener("click", handleImagesDownload);
+  document.getElementById("imagesDownloadToolbar")?.addEventListener("click", handleImagesDownload);
   document.getElementById("imagesClear")?.addEventListener("click", () => {
     state.images = deepClone(defaultState.images);
     runtime.files.images = null;
