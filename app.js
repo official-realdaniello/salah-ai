@@ -1817,7 +1817,9 @@ function renderShell() {
       ${renderNotifications()}
       <header class="app-header glass">
         <a class="brand" href="index.html">
-          <span class="brand-mark">SA</span>
+          <span class="brand-mark" aria-hidden="true">
+            <img class="brand-mark-image" src="favicon.svg" alt="">
+          </span>
           <span class="brand-copy">
             <strong class="brand-title">${escapeHtml(read("brand"))}</strong>
             <span class="brand-subtitle">${escapeHtml(read("brandSub"))}</span>
@@ -2467,7 +2469,9 @@ function renderImagesResult() {
 
   return `
     <section class="content-block">
-      <img class="image-preview" src="${state.images.result.imageDataUrl}" alt="Generated image">
+      <div class="image-preview-frame">
+        <img class="image-preview" src="${state.images.result.imageDataUrl}" alt="Generated image">
+      </div>
     </section>
     <section class="content-block">
       <div class="form-row">
