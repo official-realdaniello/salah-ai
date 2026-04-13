@@ -334,6 +334,7 @@ const runtime = {
   busy: { tutor: false, coding: false, notes: false, quiz: false, planner: false, images: false, cv: false, ieee: false },
   typing: { tutor: null, coding: null, notes: null, planner: null },
   files: { tutor: null, coding: null, notes: null, quiz: null, images: null },
+  imagesProgress: null,
   notifications: [],
   panel: "",
   confirm: null,
@@ -2397,6 +2398,24 @@ function renderPlannerPage() {
 }
 
 function renderImagesResult() {
+  if (runtime.busy.images) {
+    const progress = runtime.imagesProgress || {};
+    const providerLabel = progress.currentProviderLabel || uiWord("AI provider", "مزود الذكاء");
+    const attempts = Array.isArray(progress.attempts) ? progress.attempts.slice(-3) : [];
+    return `
+      <section class="content-block">
+        <p class="muted-line"><strong>${escapeHtml(uiWord("Generating image...", "جارٍ إنشاء الصورة..."))}</strong></p>
+        <p class="muted-line">${escapeHtml(uiWord(`Trying ${providerLabel}.`, `تجربة ${providerLabel}.`))}</p>
+        ${attempts.length ? `
+          <p class="muted-line">${escapeHtml(uiWord("Recent provider updates:", "آخر تحديثات المزود:"))}</p>
+          <div class="stack-form stack-form--compact">
+            ${attempts.map((attempt) => `<p class="muted-line">${escapeHtml(`${attempt.providerLabel || attempt.provider || "Provider"}${attempt.status ? ` [${attempt.status}]` : ""}: ${attempt.message || ""}`)}</p>`).join("")}
+          </div>
+        ` : ""}
+      </section>
+    `;
+  }
+
   if (!state.images.result) {
     return renderInlineEmpty(read("emptyImages"));
   }
@@ -2405,6 +2424,11 @@ function renderImagesResult() {
     <section class="content-block">
       <img class="image-preview" src="${state.images.result.imageDataUrl}" alt="Generated image">
     </section>
+    ${state.images.result.providerLabel ? `
+      <section class="content-block">
+        <p class="muted-line">${escapeHtml(uiWord(`Generated with ${state.images.result.providerLabel}.`, `تم الإنشاء باستخدام ${state.images.result.providerLabel}.`))}</p>
+      </section>
+    ` : ""}
     ${state.images.result.caption ? `
       <section class="content-block">
         <p class="muted-line">${escapeHtml(state.images.result.caption)}</p>
@@ -2518,6 +2542,45 @@ async function requestAI(task, payload) {
     notify(data.notification, data.notificationKind || "info");
   }
   return data.result;
+}
+
+async function createImageJob(payload) {
+  const response = await fetch("/api/image-jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payload })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.ok || !data.job?.id) {
+    throw new Error(data.error || "Could not start image generation.");
+  }
+  return data.job;
+}
+
+async function fetchImageJob(jobId) {
+  const response = await fetch(`/api/image-jobs/${encodeURIComponent(jobId)}`, {
+    cache: "no-store"
+  });
+  const data = await response.json();
+  if (!response.ok || !data.ok || !data.job) {
+    throw new Error(data.error || "Could not read image generation status.");
+  }
+  return data.job;
+}
+
+async function waitForImageJob(jobId) {
+  while (true) {
+    const job = await fetchImageJob(jobId);
+    runtime.imagesProgress = job;
+    renderApp();
+    if (job.status === "completed") {
+      return job;
+    }
+    if (job.status === "failed") {
+      throw new Error(job.error || "Image generation failed.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 900));
+  }
 }
 
 function stripSpeechMarkup(text) {
@@ -2753,6 +2816,7 @@ function resetRuntimeTransientState() {
   runtime.busy = { tutor: false, coding: false, notes: false, quiz: false, planner: false, images: false, cv: false, ieee: false };
   runtime.typing = { tutor: null, coding: null, notes: null, planner: null };
   runtime.files = { tutor: null, coding: null, notes: null, quiz: null, images: null };
+  runtime.imagesProgress = null;
   runtime.panel = "";
   runtime.confirm = null;
   runtime.notifications = [];
@@ -3596,20 +3660,32 @@ async function runImageRequest(payload, persistInput = true) {
   if (persistInput) {
     state.images.lastInput = { ...state.images.lastInput, ...payload };
   }
+  state.images.result = null;
   persist();
 
   runtime.busy.images = true;
+  runtime.imagesProgress = {
+    status: "queued",
+    currentProvider: "",
+    currentProviderLabel: "xAI",
+    attempts: []
+  };
   renderApp();
   setBusy(submitButton, true);
 
   try {
-    state.images.result = await requestAI("image", payload);
+    const job = await createImageJob(payload);
+    runtime.imagesProgress = job;
+    renderApp();
+    const completedJob = await waitForImageJob(job.id);
+    state.images.result = completedJob.result || null;
     persist();
     renderApp();
   } catch (error) {
     alertError(error);
   } finally {
     runtime.busy.images = false;
+    runtime.imagesProgress = null;
     renderApp();
     setBusy(submitButton, false);
   }
@@ -3980,6 +4056,7 @@ function bindImagesEvents() {
   document.getElementById("imagesClear")?.addEventListener("click", () => {
     state.images = deepClone(defaultState.images);
     runtime.files.images = null;
+    runtime.imagesProgress = null;
     persist();
     renderApp();
   });

@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 const { execFile } = require("child_process");
 const { promisify } = require("util");
 const { URL, pathToFileURL } = require("url");
@@ -108,6 +109,8 @@ const PROVIDER_COOLDOWN_MS = 90 * 1000;
 const RATE_LIMIT_PROVIDER_COOLDOWN_MS = 5 * 60 * 1000;
 const AUTH_PROVIDER_COOLDOWN_MS = 15 * 60 * 1000;
 const providerCooldowns = new Map();
+const IMAGE_JOB_TTL_MS = 30 * 60 * 1000;
+const imageJobs = new Map();
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -220,6 +223,65 @@ function sendText(res, statusCode, payload) {
     "X-Content-Type-Options": "nosniff"
   });
   res.end(payload);
+}
+
+function providerDisplayName(providerName) {
+  switch (sanitizeString(providerName, 40).toLowerCase()) {
+    case "xai":
+      return "xAI";
+    case "gemini":
+      return "Gemini";
+    case "deepseek":
+      return "DeepSeek";
+    case "groq":
+      return "Groq";
+    case "together":
+      return "Together";
+    case "runway":
+      return "Runway";
+    case "pixazo":
+      return "Pixazo";
+    case "fal":
+      return "fal";
+    case "pollinations":
+      return "Pollinations";
+    default:
+      return sanitizeString(providerName, 40) || "Provider";
+  }
+}
+
+function cleanupExpiredImageJobs() {
+  const now = Date.now();
+  for (const [jobId, job] of imageJobs.entries()) {
+    const updatedAt = Number(job?.updatedAt || job?.createdAt || 0);
+    if (!updatedAt || now - updatedAt > IMAGE_JOB_TTL_MS) {
+      imageJobs.delete(jobId);
+    }
+  }
+}
+
+function serializeImageJob(job) {
+  if (!job) {
+    return null;
+  }
+  return {
+    id: job.id,
+    status: job.status,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    currentProvider: sanitizeString(job.currentProvider, 40),
+    currentProviderLabel: sanitizeString(job.currentProviderLabel, 60),
+    attemptCount: Array.isArray(job.attempts) ? job.attempts.length : 0,
+    attempts: Array.isArray(job.attempts) ? job.attempts.slice(-6).map((attempt) => ({
+      provider: sanitizeString(attempt.provider, 40),
+      providerLabel: sanitizeString(attempt.providerLabel, 60),
+      status: Number(attempt.status || 0),
+      message: sanitizeString(attempt.message, 180),
+      at: Number(attempt.at || 0)
+    })) : [],
+    result: job.status === "completed" ? job.result : undefined,
+    error: job.status === "failed" ? sanitizeString(job.error, 600) : ""
+  };
 }
 
 function normalizeFilePath(requestPath) {
@@ -2544,7 +2606,7 @@ function providerPlanFor(task, payload) {
   ];
 }
 
-async function callWithFallback(task, payload) {
+async function callWithFallback(task, payload, options = {}) {
   const failures = [];
   const providers = providerPlanFor(task, payload);
 
@@ -2558,15 +2620,37 @@ async function callWithFallback(task, payload) {
       continue;
     }
     try {
+      if (typeof options.onAttemptStart === "function") {
+        options.onAttemptStart({
+          task,
+          provider: provider.name,
+          providerLabel: providerDisplayName(provider.name),
+          providerAttempt: sanitizeString(cooldownName || provider.name || "provider", 120)
+        });
+      }
       const result = await provider.fn();
       clearProviderCooldown(task, cooldownName);
-      return { result };
+      return {
+        result,
+        provider: provider.name,
+        providerLabel: providerDisplayName(provider.name)
+      };
     } catch (error) {
       if (error && !error.provider) {
         error.provider = provider.name || "";
       }
       if (error && !error.providerAttempt) {
         error.providerAttempt = sanitizeString(cooldownName || provider.name || "provider", 120);
+      }
+      if (typeof options.onAttemptFailure === "function") {
+        options.onAttemptFailure({
+          task,
+          provider: error.provider || provider.name,
+          providerLabel: providerDisplayName(error.provider || provider.name),
+          providerAttempt: error.providerAttempt,
+          status: Number(error.status || 0),
+          message: sanitizeString(error.message, 240)
+        });
       }
       failures.push(error);
       setProviderCooldown(task, cooldownName, error);
@@ -2588,6 +2672,72 @@ async function callWithFallback(task, payload) {
   unavailable.statusCode = 503;
   unavailable.failures = failures;
   throw unavailable;
+}
+
+function createImageJob(payload) {
+  cleanupExpiredImageJobs();
+  const job = {
+    id: crypto.randomUUID().replace(/-/g, ""),
+    status: "queued",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    currentProvider: "",
+    currentProviderLabel: "",
+    attempts: [],
+    result: null,
+    error: ""
+  };
+  imageJobs.set(job.id, job);
+
+  void (async () => {
+    job.status = "running";
+    job.updatedAt = Date.now();
+    try {
+      const output = await callWithFallback("image", payload, {
+        onAttemptStart(attempt) {
+          job.currentProvider = sanitizeString(attempt.provider, 40);
+          job.currentProviderLabel = sanitizeString(attempt.providerLabel, 60);
+          job.updatedAt = Date.now();
+        },
+        onAttemptFailure(attempt) {
+          job.attempts.push({
+            provider: sanitizeString(attempt.provider, 40),
+            providerLabel: sanitizeString(attempt.providerLabel, 60),
+            status: Number(attempt.status || 0),
+            message: sanitizeString(attempt.message, 180),
+            at: Date.now()
+          });
+          job.updatedAt = Date.now();
+        }
+      });
+      job.status = "completed";
+      job.currentProvider = sanitizeString(output.provider, 40);
+      job.currentProviderLabel = sanitizeString(output.providerLabel, 60);
+      job.result = {
+        ...(output.result || {}),
+        provider: sanitizeString(output.provider, 40),
+        providerLabel: sanitizeString(output.providerLabel, 60)
+      };
+      job.updatedAt = Date.now();
+    } catch (error) {
+      job.status = "failed";
+      job.error = sanitizeString(error?.message || "Image generation failed.", 600);
+      if (Array.isArray(error?.failures)) {
+        for (const failure of error.failures.slice(0, 6)) {
+          job.attempts.push({
+            provider: sanitizeString(failure?.provider, 40),
+            providerLabel: providerDisplayName(failure?.provider),
+            status: Number(failure?.status || 0),
+            message: sanitizeString(failure?.message, 180),
+            at: Date.now()
+          });
+        }
+      }
+      job.updatedAt = Date.now();
+    }
+  })();
+
+  return job;
 }
 
 function serveStatic(res, absolutePath) {
@@ -2631,6 +2781,55 @@ const server = http.createServer(async (req, res) => {
         ),
         defaultModel: DEFAULT_MODEL,
         codingModel: CODING_MODEL
+      });
+      return;
+    }
+
+    const imageJobMatch = requestUrl.pathname.match(/^\/api\/image-jobs\/([A-Za-z0-9_-]+)$/);
+    if (req.method === "GET" && imageJobMatch) {
+      cleanupExpiredImageJobs();
+      const job = imageJobs.get(imageJobMatch[1]);
+      if (!job) {
+        sendJson(res, 404, {
+          ok: false,
+          error: "Image job was not found."
+        });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        job: serializeImageJob(job)
+      });
+      return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/image-jobs") {
+      const body = await readJsonBody(req);
+      const payload = body.payload || {};
+      const prompt = sanitizeString(payload.prompt, 2200);
+      if (!prompt) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Image prompt is required."
+        });
+        return;
+      }
+      const safetyPayload = { ...payload };
+      if (typeof safetyPayload.imageData === "string") {
+        safetyPayload.imageData = "[omitted]";
+      }
+      const textForSafety = JSON.stringify(safetyPayload).slice(0, 12000);
+      if (!ensureSafeIntent(textForSafety)) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "This request matches blocked cyber-abuse patterns and was rejected."
+        });
+        return;
+      }
+      const job = createImageJob(payload);
+      sendJson(res, 202, {
+        ok: true,
+        job: serializeImageJob(job)
       });
       return;
     }
