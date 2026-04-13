@@ -10,14 +10,62 @@ const ROOT = __dirname;
 const execFileAsync = promisify(execFile);
 loadLocalEnv(path.join(ROOT, ".env"));
 
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function splitEnvList(value) {
+  return String(value || "")
+    .split(/[\r\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isPlaceholderCredentialValue(value) {
+  return /^(?:n\/a|na|none|null|nil|replace(?:[_-\s]?me)?|your(?:[_-\s]?(?:api|secret|token|key))?(?:[_-\s]?here)?)$/i.test(String(value || "").trim());
+}
+
+function collectCredentialValues(singleEnvKey, listEnvKey) {
+  const values = [];
+  values.push(...splitEnvList(process.env[listEnvKey]));
+  values.push(...splitEnvList(process.env[singleEnvKey]));
+
+  const numberedPattern = new RegExp(`^${escapeRegExp(singleEnvKey)}_(\\d+)$`);
+  const numberedEntries = Object.keys(process.env)
+    .map((envKey) => {
+      const match = envKey.match(numberedPattern);
+      if (!match) {
+        return null;
+      }
+      return { envKey, index: Number(match[1]) || 0 };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.index - right.index);
+
+  for (const entry of numberedEntries) {
+    values.push(...splitEnvList(process.env[entry.envKey]));
+  }
+
+  return Array.from(new Set(values.filter((value) => !isPlaceholderCredentialValue(value))));
+}
+
+function createCredentialPool(providerName, singleEnvKey, listEnvKey) {
+  return collectCredentialValues(singleEnvKey, listEnvKey).map((value, index) => ({
+    provider: providerName,
+    id: `${providerName}-${index + 1}`,
+    value
+  }));
+}
+
 const PORT = Number(process.env.PORT || 10000);
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
-const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
-const TOGETHER_API_KEY = process.env.TOGETHER_API_KEY || "";
-const FAL_KEY = process.env.FAL_KEY || "";
-const RUNWAY_API_SECRET = process.env.RUNWAY_API_SECRET || "";
-const PIXAZO_API_KEY = process.env.PIXAZO_API_KEY || "";
+const GEMINI_CREDENTIALS = createCredentialPool("gemini", "GEMINI_API_KEY", "GEMINI_API_KEYS");
+const DEEPSEEK_CREDENTIALS = createCredentialPool("deepseek", "DEEPSEEK_API_KEY", "DEEPSEEK_API_KEYS");
+const GROQ_CREDENTIALS = createCredentialPool("groq", "GROQ_API_KEY", "GROQ_API_KEYS");
+const TOGETHER_CREDENTIALS = createCredentialPool("together", "TOGETHER_API_KEY", "TOGETHER_API_KEYS");
+const FAL_CREDENTIALS = createCredentialPool("fal", "FAL_KEY", "FAL_KEYS");
+const RUNWAY_CREDENTIALS = createCredentialPool("runway", "RUNWAY_API_SECRET", "RUNWAY_API_SECRETS");
+const PIXAZO_CREDENTIALS = createCredentialPool("pixazo", "PIXAZO_API_KEY", "PIXAZO_API_KEYS");
+const XAI_CREDENTIALS = createCredentialPool("xai", "XAI_API_KEY", "XAI_API_KEYS");
 const DEFAULT_MODEL = process.env.SALAH_AI_MODEL || "gemini-2.5-flash-lite";
 const CODING_MODEL = process.env.SALAH_AI_CODING_MODEL || DEFAULT_MODEL;
 const IMAGE_MODEL = process.env.SALAH_AI_IMAGE_MODEL || "gemini-2.5-flash-image";
@@ -27,8 +75,10 @@ const GEMINI_IMAGE_MODEL_FALLBACKS = Array.from(new Set([
   "gemini-2.5-flash-image",
   "gemini-2.0-flash-preview-image-generation"
 ].filter(Boolean)));
-const DEEPSEEK_MODEL = process.env.SALAH_AI_DEEPSEEK_MODEL || "deepseek-chat";
-const GROQ_MODEL = process.env.SALAH_AI_GROQ_MODEL || "llama-3.1-8b-instant";
+const DEEPSEEK_MODEL = process.env.SALAH_AI_DEEPSEEK_MODEL || "deepseek-reasoner";
+const DEEPSEEK_CODING_MODEL = process.env.SALAH_AI_DEEPSEEK_CODING_MODEL || DEEPSEEK_MODEL;
+const GROQ_MODEL = process.env.SALAH_AI_GROQ_MODEL || "openai/gpt-oss-120b";
+const GROQ_CODING_MODEL = process.env.SALAH_AI_GROQ_CODING_MODEL || GROQ_MODEL;
 const TOGETHER_MODEL = process.env.SALAH_AI_TOGETHER_MODEL || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo";
 const TOGETHER_IMAGE_FAST_MODEL = process.env.SALAH_AI_TOGETHER_IMAGE_FAST_MODEL || "black-forest-labs/FLUX.1-schnell-Free";
 const TOGETHER_IMAGE_BALANCED_MODEL = process.env.SALAH_AI_TOGETHER_IMAGE_BALANCED_MODEL
@@ -39,6 +89,8 @@ const TOGETHER_IMAGE_MODEL = TOGETHER_IMAGE_BALANCED_MODEL;
 const FAL_IMAGE_MODEL = process.env.SALAH_AI_FAL_IMAGE_MODEL || "fal-ai/flux/schnell";
 const RUNWAY_IMAGE_MODEL = process.env.SALAH_AI_RUNWAY_IMAGE_MODEL || "gen4_image_turbo";
 const PIXAZO_IMAGE_MODEL = process.env.SALAH_AI_PIXAZO_IMAGE_MODEL || "wan-2.5";
+const XAI_IMAGE_MODEL = process.env.SALAH_AI_XAI_IMAGE_MODEL || "grok-imagine-image";
+const XAI_IMAGE_PRO_MODEL = process.env.SALAH_AI_XAI_IMAGE_PRO_MODEL || "grok-imagine-image-pro";
 const POLLINATIONS_IMAGE_MODEL = process.env.SALAH_AI_POLLINATIONS_IMAGE_MODEL || "flux";
 const MAX_BODY_SIZE = 18 * 1024 * 1024;
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -49,6 +101,7 @@ const TOGETHER_API_BASE = "https://api.together.xyz/v1";
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const RUNWAY_API_BASE = "https://api.dev.runwayml.com";
 const PIXAZO_GATEWAY_BASE = "https://gateway.pixazo.ai";
+const XAI_API_BASE = "https://api.x.ai/v1";
 const POLLINATIONS_IMAGE_BASE = "https://image.pollinations.ai/prompt";
 const FILE_POLL_ATTEMPTS = 12;
 const FILE_POLL_DELAY_MS = 1200;
@@ -560,6 +613,188 @@ function sendPdf(res, fileName, pdfBuffer) {
 function sanitizeModel(value, fallback) {
   const candidate = sanitizeString(value, 64);
   return /^[A-Za-z0-9._/-]+$/.test(candidate) ? candidate : fallback;
+}
+
+function createModelPriorityList(configuredValue, defaults) {
+  const configured = splitEnvList(configuredValue)
+    .map((item) => sanitizeModel(item, ""))
+    .filter(Boolean);
+  return Array.from(new Set((configured.length ? configured : defaults).filter(Boolean)));
+}
+
+const DEFAULT_GEMINI_TEXT_MODEL_FALLBACKS = [
+  "gemini-3.1-pro-preview",
+  "gemini-2.5-pro",
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+  "gemini-3.1-flash-lite-preview",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite"
+];
+
+const GEMINI_TEXT_MODEL_FALLBACKS = createModelPriorityList(
+  process.env.SALAH_AI_GEMINI_TEXT_MODELS,
+  DEFAULT_GEMINI_TEXT_MODEL_FALLBACKS
+);
+
+const GEMINI_CODING_MODEL_FALLBACKS = createModelPriorityList(
+  process.env.SALAH_AI_GEMINI_CODING_MODELS,
+  GEMINI_TEXT_MODEL_FALLBACKS
+);
+
+const DEFAULT_DEEPSEEK_MODEL_FALLBACKS = [
+  "deepseek-reasoner",
+  "deepseek-chat"
+];
+
+const DEEPSEEK_TEXT_MODEL_FALLBACKS = Array.from(new Set([
+  sanitizeModel(DEEPSEEK_MODEL, ""),
+  ...createModelPriorityList(process.env.SALAH_AI_DEEPSEEK_TEXT_MODELS, DEFAULT_DEEPSEEK_MODEL_FALLBACKS)
+].filter(Boolean)));
+
+const DEEPSEEK_CODING_MODEL_FALLBACKS = Array.from(new Set([
+  sanitizeModel(DEEPSEEK_CODING_MODEL, ""),
+  sanitizeModel(DEEPSEEK_MODEL, ""),
+  ...createModelPriorityList(process.env.SALAH_AI_DEEPSEEK_CODING_MODELS, DEFAULT_DEEPSEEK_MODEL_FALLBACKS)
+].filter(Boolean)));
+
+const DEFAULT_GROQ_TEXT_MODEL_FALLBACKS = [
+  "openai/gpt-oss-120b",
+  "llama-3.3-70b-versatile",
+  "qwen/qwen3-32b",
+  "moonshotai/kimi-k2-instruct-0905",
+  "meta-llama/llama-4-scout-17b-16e-instruct",
+  "openai/gpt-oss-20b",
+  "groq/compound",
+  "groq/compound-mini",
+  "llama-3.1-8b-instant"
+];
+
+const GROQ_TEXT_MODEL_FALLBACKS = Array.from(new Set([
+  sanitizeModel(GROQ_MODEL, ""),
+  ...createModelPriorityList(process.env.SALAH_AI_GROQ_TEXT_MODELS, DEFAULT_GROQ_TEXT_MODEL_FALLBACKS)
+].filter(Boolean)));
+
+const GROQ_CODING_MODEL_FALLBACKS = Array.from(new Set([
+  sanitizeModel(GROQ_CODING_MODEL, ""),
+  sanitizeModel(GROQ_MODEL, ""),
+  ...createModelPriorityList(process.env.SALAH_AI_GROQ_CODING_MODELS, DEFAULT_GROQ_TEXT_MODEL_FALLBACKS)
+].filter(Boolean)));
+
+function geminiModelFallbacksForTask(task) {
+  return task === "coding" ? GEMINI_CODING_MODEL_FALLBACKS : GEMINI_TEXT_MODEL_FALLBACKS;
+}
+
+function geminiModelsToTry(task, requestedModel) {
+  return Array.from(new Set([
+    sanitizeModel(requestedModel, ""),
+    ...geminiModelFallbacksForTask(task)
+  ].filter(Boolean)));
+}
+
+function geminiModelCooldownName(credential, modelName) {
+  const safeModel = sanitizeModel(modelName, "");
+  if (!safeModel) {
+    return "";
+  }
+  return `gemini:${sanitizeString(credential?.id, 80) || "default"}:${safeModel}`;
+}
+
+function shouldRetryGeminiWithAnotherModel(error) {
+  if (!error) {
+    return false;
+  }
+  if (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK") {
+    return false;
+  }
+  if ([401, 402, 403].includes(Number(error.status || 0))) {
+    return false;
+  }
+
+  const text = String(error.message || "").toLowerCase();
+  if (
+    text.includes("api key")
+    || text.includes("permission denied")
+    || text.includes("permission_denied")
+    || text.includes("authentication")
+    || text.includes("blocked the request")
+  ) {
+    return false;
+  }
+  return shouldUseBackup(error);
+}
+
+function deepseekModelsToTry(task) {
+  return task === "coding" ? DEEPSEEK_CODING_MODEL_FALLBACKS : DEEPSEEK_TEXT_MODEL_FALLBACKS;
+}
+
+function deepseekModelCooldownName(credential, modelName) {
+  const safeModel = sanitizeModel(modelName, "");
+  if (!safeModel) {
+    return "";
+  }
+  return `deepseek:${sanitizeString(credential?.id, 80) || "default"}:${safeModel}`;
+}
+
+function shouldRetryDeepSeekWithAnotherModel(error) {
+  if (!error) {
+    return false;
+  }
+  if (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK") {
+    return false;
+  }
+  if ([401, 402, 403].includes(Number(error.status || 0))) {
+    return false;
+  }
+
+  const text = String(error.message || "").toLowerCase();
+  if (
+    text.includes("api key")
+    || text.includes("authentication")
+    || text.includes("permission denied")
+    || text.includes("insufficient balance")
+    || text.includes("余额不足")
+  ) {
+    return false;
+  }
+  return shouldUseBackup(error);
+}
+
+function groqModelsToTry(task) {
+  return task === "coding" ? GROQ_CODING_MODEL_FALLBACKS : GROQ_TEXT_MODEL_FALLBACKS;
+}
+
+function groqModelCooldownName(credential, modelName) {
+  const safeModel = sanitizeModel(modelName, "");
+  if (!safeModel) {
+    return "";
+  }
+  return `groq:${sanitizeString(credential?.id, 80) || "default"}:${safeModel}`;
+}
+
+function shouldRetryGroqWithAnotherModel(error) {
+  if (!error) {
+    return false;
+  }
+  if (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK") {
+    return false;
+  }
+  if ([401, 402, 403].includes(Number(error.status || 0))) {
+    return false;
+  }
+
+  const text = String(error.message || "").toLowerCase();
+  if (
+    text.includes("api key")
+    || text.includes("authentication")
+    || text.includes("permission denied")
+    || text.includes("project")
+    || text.includes("organization")
+  ) {
+    return false;
+  }
+  return shouldUseBackup(error);
 }
 
 function normalizeImageQualityMode(value) {
@@ -1274,6 +1509,14 @@ function imageAspectToPixazoSize(aspectRatio) {
   }
 }
 
+function imageResolutionForQualityMode(value) {
+  const mode = normalizeImageQualityMode(value);
+  if (mode === "high") {
+    return "2k";
+  }
+  return "1k";
+}
+
 function normalizeGeminiFile(file, fallbackMimeType) {
   const source = file?.file || file || {};
   return {
@@ -1284,11 +1527,56 @@ function normalizeGeminiFile(file, fallbackMimeType) {
   };
 }
 
-async function uploadGeminiFile(fileName, dataUrl) {
+function credentialValue(credential) {
+  return sanitizeString(credential?.value, 4000);
+}
+
+function xaiImageModelsToTry(payload) {
+  const requestedModel = sanitizeModel(payload?.model, "");
+  const qualityMode = normalizeImageQualityMode(payload?.qualityMode);
+  const preferredModels = payload?.imageData || qualityMode === "high"
+    ? [XAI_IMAGE_PRO_MODEL, XAI_IMAGE_MODEL]
+    : [XAI_IMAGE_MODEL, XAI_IMAGE_PRO_MODEL];
+  return Array.from(new Set([requestedModel, ...preferredModels].filter(Boolean)));
+}
+
+function xaiImageModelCooldownName(credential, modelName) {
+  const safeModel = sanitizeModel(modelName, "");
+  if (!safeModel) {
+    return "";
+  }
+  return `xai:${sanitizeString(credential?.id, 80) || "default"}:${safeModel}`;
+}
+
+function shouldRetryXaiWithAnotherModel(error) {
+  if (!error) {
+    return false;
+  }
+  if (error.code === "UNSUPPORTED_TASK") {
+    return false;
+  }
+  if ([401, 402, 403].includes(Number(error.status || 0))) {
+    return false;
+  }
+  const text = String(error.message || "").toLowerCase();
+  if (
+    text.includes("api key")
+    || text.includes("authentication")
+    || text.includes("permission denied")
+    || text.includes("moderation")
+    || text.includes("filtered")
+  ) {
+    return false;
+  }
+  return shouldUseBackup(error);
+}
+
+async function uploadGeminiFile(fileName, dataUrl, credential) {
   const safeFileName = sanitizeString(fileName, 160) || "study-file";
   const { mimeType, bytes } = decodeDataUrl(dataUrl);
+  const apiKey = credentialValue(credential);
 
-  const startResponse = await fetch(`${GEMINI_UPLOAD_BASE}?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
+  const startResponse = await fetch(`${GEMINI_UPLOAD_BASE}?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: {
       "X-Goog-Upload-Protocol": "resumable",
@@ -1347,7 +1635,7 @@ async function uploadGeminiFile(fileName, dataUrl) {
     const statusResponse = await fetch(`${GEMINI_API_BASE}/${file.name}`, {
       method: "GET",
       headers: {
-        "x-goog-api-key": GEMINI_API_KEY
+        "x-goog-api-key": apiKey
       }
     });
     const statusPayload = await readResponsePayload(statusResponse);
@@ -1360,7 +1648,9 @@ async function uploadGeminiFile(fileName, dataUrl) {
   throw new Error("The uploaded file is still processing. Please try again in a moment.");
 }
 
-async function callGeminiProvider(task, payload) {
+async function callGeminiProvider(task, payload, credential) {
+  const apiKey = credentialValue(credential);
+
   if (task === "image") {
     const requestedModel = sanitizeString(payload?.model, 120);
     const modelsToTry = Array.from(new Set([requestedModel, ...GEMINI_IMAGE_MODEL_FALLBACKS].filter(Boolean)));
@@ -1377,7 +1667,7 @@ async function callGeminiProvider(task, payload) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-goog-api-key": GEMINI_API_KEY
+          "x-goog-api-key": apiKey
         },
         body: JSON.stringify(requestBody)
       });
@@ -1401,7 +1691,7 @@ async function callGeminiProvider(task, payload) {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-goog-api-key": GEMINI_API_KEY
+            "x-goog-api-key": apiKey
           },
           body: JSON.stringify({ contents: imagePrompt.contents })
         });
@@ -1423,13 +1713,14 @@ async function callGeminiProvider(task, payload) {
   }
 
   const prompt = buildPrompt(task, payload);
+  const modelsToTry = geminiModelsToTry(task, prompt.model);
   const contents = prompt.contents.map((content) => ({
     role: content.role,
     parts: content.parts.map((part) => ({ ...part }))
   }));
 
   if (prompt.attachment) {
-    const uploadedFile = await uploadGeminiFile(prompt.attachment.fileName, prompt.attachment.fileData);
+    const uploadedFile = await uploadGeminiFile(prompt.attachment.fileName, prompt.attachment.fileData, credential);
     contents[contents.length - 1].parts.push({
       file_data: {
         mime_type: uploadedFile.mimeType,
@@ -1453,34 +1744,58 @@ async function callGeminiProvider(task, payload) {
     };
   }
 
-  const response = await fetchWithTimeout(`${GEMINI_API_BASE}/models/${encodeURIComponent(prompt.model)}:generateContent`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": GEMINI_API_KEY
-    },
-    body: JSON.stringify(requestBody)
-  });
+  let lastError = null;
+  for (const modelName of modelsToTry) {
+    const cooldownName = geminiModelCooldownName(credential, modelName);
+    if (cooldownName && isProviderCoolingDown(task, cooldownName)) {
+      continue;
+    }
 
-  const raw = await readResponsePayload(response);
-  if (!response.ok) {
-    throw makeTaggedError(extractApiError(raw, "AI request failed."), {
-      provider: "gemini",
-      status: response.status,
-      rateLimited: response.status === 429 || String(extractApiError(raw, "")).toLowerCase().includes("resource exhausted"),
-      retryable: response.status >= 500 || response.status === 429
+    const response = await fetchWithTimeout(`${GEMINI_API_BASE}/models/${encodeURIComponent(modelName)}:generateContent`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey
+      },
+      body: JSON.stringify(requestBody)
     });
+
+    const raw = await readResponsePayload(response);
+    if (!response.ok) {
+      const errorMessage = extractApiError(raw, "AI request failed.");
+      const error = makeTaggedError(errorMessage, {
+        provider: "gemini",
+        status: response.status,
+        rateLimited: response.status === 429 || String(errorMessage).toLowerCase().includes("resource exhausted"),
+        retryable: response.status >= 500 || response.status === 429
+      });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryGeminiWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    if (cooldownName) {
+      clearProviderCooldown(task, cooldownName);
+    }
+    const outputText = collectGeminiText(raw);
+    return parseStructuredText(outputText);
   }
 
-  const outputText = collectGeminiText(raw);
-  return parseStructuredText(outputText);
+  throw lastError || makeTaggedError("AI request failed.", { provider: "gemini", retryable: true });
 }
 
-async function callDeepSeekProvider(task, payload) {
+async function callDeepSeekProvider(task, payload, credential) {
   if (task === "image") {
     throw makeTaggedError("This request type is not available in the current backup provider.", { provider: "deepseek", code: "UNSUPPORTED_TASK" });
   }
 
+  const apiKey = credentialValue(credential);
+  const modelsToTry = deepseekModelsToTry(task);
   const prompt = buildPrompt(task, payload);
   const messages = promptToOpenAiMessages(prompt, "deepseek");
   const schema = responseSchemaFor(task);
@@ -1492,38 +1807,70 @@ async function callDeepSeekProvider(task, payload) {
     messages.unshift({ role: "system", content: systemSchemaInstruction });
   }
 
-  const response = await fetchWithTimeout(`${DEEPSEEK_API_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${DEEPSEEK_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
-      messages,
-      response_format: { type: "json_object" }
-    })
-  });
+  let lastError = null;
+  for (const modelName of modelsToTry) {
+    const cooldownName = deepseekModelCooldownName(credential, modelName);
+    if (cooldownName && isProviderCoolingDown(task, cooldownName)) {
+      continue;
+    }
 
-  const raw = await readResponsePayload(response);
-  if (!response.ok) {
-    throw makeTaggedError(extractApiError(raw, "Backup provider request failed."), {
-      provider: "deepseek",
-      status: response.status,
-      rateLimited: response.status === 429 || String(extractApiError(raw, "")).toLowerCase().includes("rate limit"),
-      retryable: response.status >= 500 || response.status === 429
+    const response = await fetchWithTimeout(`${DEEPSEEK_API_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages,
+        response_format: { type: "json_object" }
+      })
     });
+
+    const raw = await readResponsePayload(response);
+    if (!response.ok) {
+      const errorMessage = extractApiError(raw, "Backup provider request failed.");
+      const error = makeTaggedError(errorMessage, {
+        provider: "deepseek",
+        status: response.status,
+        rateLimited: response.status === 429 || String(errorMessage).toLowerCase().includes("rate limit"),
+        retryable: response.status >= 500 || response.status === 429
+      });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryDeepSeekWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    const outputText = sanitizeString(extractOpenAiMessageText(raw?.choices?.[0]?.message?.content), 60000);
+    if (!outputText) {
+      const error = makeTaggedError("The backup provider returned an empty response.", { provider: "deepseek", retryable: true });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryDeepSeekWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    if (cooldownName) {
+      clearProviderCooldown(task, cooldownName);
+    }
+    return parseStructuredText(outputText);
   }
 
-  const outputText = sanitizeString(extractOpenAiMessageText(raw?.choices?.[0]?.message?.content), 60000);
-  if (!outputText) {
-    throw makeTaggedError("The backup provider returned an empty response.", { provider: "deepseek", retryable: true });
-  }
-
-  return parseStructuredText(outputText);
+  throw lastError || makeTaggedError("Backup provider request failed.", { provider: "deepseek", retryable: true });
 }
 
-async function callTogetherProvider(task, payload) {
+async function callTogetherProvider(task, payload, credential) {
+  const apiKey = credentialValue(credential);
+
   if (task === "image") {
     if (payload.imageData) {
       throw makeTaggedError("Reference-image editing is not available in the Together image fallback for this request.", {
@@ -1538,7 +1885,7 @@ async function callTogetherProvider(task, payload) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${TOGETHER_API_KEY}`
+        "Authorization": `Bearer ${apiKey}`
       },
       body: JSON.stringify({
         model: sanitizeModel(payload.model, TOGETHER_IMAGE_MODEL),
@@ -1598,7 +1945,7 @@ async function callTogetherProvider(task, payload) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${TOGETHER_API_KEY}`
+      "Authorization": `Bearer ${apiKey}`
     },
     body: JSON.stringify({
       model: sanitizeModel(payload.model, TOGETHER_MODEL),
@@ -1625,11 +1972,12 @@ async function callTogetherProvider(task, payload) {
   return parseStructuredText(outputText);
 }
 
-async function callFalProvider(task, payload) {
+async function callFalProvider(task, payload, credential) {
   if (task !== "image") {
     throw makeTaggedError("This request type is not available in the current image provider.", { provider: "fal", code: "UNSUPPORTED_TASK" });
   }
 
+  const apiKey = credentialValue(credential);
   if (payload.imageData) {
     throw makeTaggedError("Reference-image editing is not enabled for the fal image flow in this app yet.", {
       provider: "fal",
@@ -1644,7 +1992,7 @@ async function callFalProvider(task, payload) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Key ${FAL_KEY}`
+      "Authorization": `Key ${apiKey}`
     },
     body: JSON.stringify({
       prompt,
@@ -1677,7 +2025,7 @@ async function callFalProvider(task, payload) {
     const statusResponse = await fetchWithTimeout(`${FAL_QUEUE_BASE}/${modelPath}/requests/${encodeURIComponent(requestId)}/status`, {
       method: "GET",
       headers: {
-        "Authorization": `Key ${FAL_KEY}`
+        "Authorization": `Key ${apiKey}`
       }
     });
     const statusPayload = await readResponsePayload(statusResponse);
@@ -1700,7 +2048,7 @@ async function callFalProvider(task, payload) {
         {
         method: "GET",
         headers: {
-          "Authorization": `Key ${FAL_KEY}`
+          "Authorization": `Key ${apiKey}`
         }
       });
       resultPayload = await readResponsePayload(resultResponse);
@@ -1732,11 +2080,12 @@ async function callFalProvider(task, payload) {
   };
 }
 
-async function callRunwayProvider(task, payload) {
+async function callRunwayProvider(task, payload, credential) {
   if (task !== "image") {
     throw makeTaggedError("This request type is not available in the current image provider.", { provider: "runway", code: "UNSUPPORTED_TASK" });
   }
 
+  const apiKey = credentialValue(credential);
   const prompt = imagePromptWithQualityGuidance(payload);
 
   const requestBody = {
@@ -1753,7 +2102,7 @@ async function callRunwayProvider(task, payload) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${RUNWAY_API_SECRET}`,
+      "Authorization": `Bearer ${apiKey}`,
       "X-Runway-Version": "2024-11-06"
     },
     body: JSON.stringify(requestBody)
@@ -1779,7 +2128,7 @@ async function callRunwayProvider(task, payload) {
     const statusResponse = await fetchWithTimeout(`${RUNWAY_API_BASE}/v1/tasks/${encodeURIComponent(taskId)}`, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${RUNWAY_API_SECRET}`,
+        "Authorization": `Bearer ${apiKey}`,
         "X-Runway-Version": "2024-11-06"
       }
     }, PROVIDER_TIMEOUT_MS);
@@ -1825,11 +2174,12 @@ function resolvePixazoImageUrl(payload) {
   );
 }
 
-async function callPixazoProvider(task, payload) {
+async function callPixazoProvider(task, payload, credential) {
   if (task !== "image") {
     throw makeTaggedError("This request type is not available in the current image provider.", { provider: "pixazo", code: "UNSUPPORTED_TASK" });
   }
 
+  const apiKey = credentialValue(credential);
   if (payload.imageData) {
     throw makeTaggedError("Reference-image editing is not enabled for the Pixazo image flow in this app yet.", {
       provider: "pixazo",
@@ -1844,7 +2194,7 @@ async function callPixazoProvider(task, payload) {
     headers: {
       "Content-Type": "application/json",
       "Cache-Control": "no-cache",
-      "Ocp-Apim-Subscription-Key": PIXAZO_API_KEY
+      "Ocp-Apim-Subscription-Key": apiKey
     },
     body: JSON.stringify({
       prompt,
@@ -1880,7 +2230,7 @@ async function callPixazoProvider(task, payload) {
         method: "GET",
         headers: {
           "Cache-Control": "no-cache",
-          "Ocp-Apim-Subscription-Key": PIXAZO_API_KEY
+          "Ocp-Apim-Subscription-Key": apiKey
         }
       },
       PROVIDER_TIMEOUT_MS
@@ -1913,6 +2263,112 @@ async function callPixazoProvider(task, payload) {
     mimeType: download.mimeType,
     imageDataUrl: `data:${download.mimeType};base64,${download.bytes.toString("base64")}`
   };
+}
+
+async function callXaiProvider(task, payload, credential) {
+  if (task !== "image") {
+    throw makeTaggedError("This request type is not available in the current image provider.", { provider: "xai", code: "UNSUPPORTED_TASK" });
+  }
+
+  const apiKey = credentialValue(credential);
+  const prompt = imagePromptWithQualityGuidance(payload);
+  const modelsToTry = xaiImageModelsToTry(payload);
+  const aspectRatio = ["1:1", "4:3", "3:4", "16:9", "9:16"].includes(sanitizeString(payload.aspectRatio, 10))
+    ? sanitizeString(payload.aspectRatio, 10)
+    : "1:1";
+  let lastError = null;
+
+  for (const modelName of modelsToTry) {
+    const cooldownName = xaiImageModelCooldownName(credential, modelName);
+    if (cooldownName && isProviderCoolingDown(task, cooldownName)) {
+      continue;
+    }
+
+    const endpoint = payload.imageData ? "/images/edits" : "/images/generations";
+    const requestBody = payload.imageData
+      ? {
+          model: modelName,
+          prompt,
+          image: {
+            url: sanitizeString(payload.imageData, MAX_BODY_SIZE * 2),
+            type: "image_url"
+          },
+          aspect_ratio: aspectRatio,
+          response_format: "b64_json"
+        }
+      : {
+          model: modelName,
+          prompt,
+          aspect_ratio: aspectRatio,
+          response_format: "b64_json",
+          resolution: imageResolutionForQualityMode(payload.qualityMode)
+        };
+
+    const response = await fetchWithTimeout(`${XAI_API_BASE}${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(requestBody)
+    }, PROVIDER_TIMEOUT_MS + 25000);
+
+    const raw = await readResponsePayload(response);
+    if (!response.ok) {
+      const errorMessage = extractApiError(raw, "xAI image generation failed.");
+      const error = makeTaggedError(errorMessage, {
+        provider: "xai",
+        status: response.status,
+        rateLimited: response.status === 429 || String(errorMessage).toLowerCase().includes("rate limit"),
+        retryable: response.status >= 500 || response.status === 429
+      });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryXaiWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    const image = sanitizeString(raw?.data?.[0]?.b64_json, MAX_BODY_SIZE * 4);
+    if (image) {
+      if (cooldownName) {
+        clearProviderCooldown(task, cooldownName);
+      }
+      return {
+        caption: sanitizeString(raw?.data?.[0]?.revised_prompt || raw?.data?.[0]?.prompt || "", 1200),
+        mimeType: "image/png",
+        imageDataUrl: `data:image/png;base64,${image}`
+      };
+    }
+
+    const imageUrl = sanitizeString(raw?.data?.[0]?.url, 600);
+    if (imageUrl) {
+      const download = await fetchArrayBufferWithTimeout(imageUrl);
+      if (cooldownName) {
+        clearProviderCooldown(task, cooldownName);
+      }
+      return {
+        caption: sanitizeString(raw?.data?.[0]?.revised_prompt || raw?.data?.[0]?.prompt || "", 1200),
+        mimeType: download.mimeType,
+        imageDataUrl: `data:${download.mimeType};base64,${download.bytes.toString("base64")}`
+      };
+    }
+
+    const error = makeTaggedError("xAI did not return an image.", { provider: "xai", retryable: true });
+    lastError = error;
+    if (cooldownName) {
+      setProviderCooldown(task, cooldownName, error);
+    }
+    if (shouldRetryXaiWithAnotherModel(error)) {
+      continue;
+    }
+    throw error;
+  }
+
+  throw lastError || makeTaggedError("xAI image generation failed.", { provider: "xai", retryable: true });
 }
 
 async function callPollinationsProvider(task, payload) {
@@ -1958,11 +2414,13 @@ async function callPollinationsProvider(task, payload) {
   }
 }
 
-async function callGroqProvider(task, payload) {
+async function callGroqProvider(task, payload, credential) {
   if (task === "image") {
     throw makeTaggedError("This request type is not available in the current backup provider.", { provider: "groq", code: "UNSUPPORTED_TASK" });
   }
 
+  const apiKey = credentialValue(credential);
+  const modelsToTry = groqModelsToTry(task);
   const prompt = buildPrompt(task, payload);
   const messages = promptToOpenAiMessages(prompt, "groq");
   const schema = responseSchemaFor(task);
@@ -1974,35 +2432,74 @@ async function callGroqProvider(task, payload) {
     messages.unshift({ role: "system", content: systemSchemaInstruction });
   }
 
-  const response = await fetchWithTimeout(`${GROQ_API_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${GROQ_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages,
-      response_format: { type: "json_object" }
-    })
-  });
+  let lastError = null;
+  for (const modelName of modelsToTry) {
+    const cooldownName = groqModelCooldownName(credential, modelName);
+    if (cooldownName && isProviderCoolingDown(task, cooldownName)) {
+      continue;
+    }
 
-  const raw = await readResponsePayload(response);
-  if (!response.ok) {
-    throw makeTaggedError(extractApiError(raw, "Backup provider request failed."), {
-      provider: "groq",
-      status: response.status,
-      rateLimited: response.status === 429 || String(extractApiError(raw, "")).toLowerCase().includes("rate limit"),
-      retryable: response.status >= 500 || response.status === 429
+    const response = await fetchWithTimeout(`${GROQ_API_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages,
+        response_format: { type: "json_object" }
+      })
     });
+
+    const raw = await readResponsePayload(response);
+    if (!response.ok) {
+      const errorMessage = extractApiError(raw, "Backup provider request failed.");
+      const error = makeTaggedError(errorMessage, {
+        provider: "groq",
+        status: response.status,
+        rateLimited: response.status === 429 || String(errorMessage).toLowerCase().includes("rate limit"),
+        retryable: response.status >= 500 || response.status === 429
+      });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryGroqWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    const outputText = sanitizeString(extractOpenAiMessageText(raw?.choices?.[0]?.message?.content), 60000);
+    if (!outputText) {
+      const error = makeTaggedError("The backup provider returned an empty response.", { provider: "groq", retryable: true });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryGroqWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    if (cooldownName) {
+      clearProviderCooldown(task, cooldownName);
+    }
+    return parseStructuredText(outputText);
   }
 
-  const outputText = sanitizeString(extractOpenAiMessageText(raw?.choices?.[0]?.message?.content), 60000);
-  if (!outputText) {
-    throw makeTaggedError("The backup provider returned an empty response.", { provider: "groq", retryable: true });
-  }
+  throw lastError || makeTaggedError("Backup provider request failed.", { provider: "groq", retryable: true });
+}
 
-  return parseStructuredText(outputText);
+function createCredentialAttempts(providerName, credentials, createCall) {
+  return credentials.map((credential) => ({
+    name: providerName,
+    enabled: true,
+    cooldownName: `${providerName}:${credential.id}`,
+    fn: () => createCall(credential)
+  }));
 }
 
 function providerPlanFor(task, payload) {
@@ -2011,58 +2508,60 @@ function providerPlanFor(task, payload) {
     const qualityMode = normalizeImageQualityMode(payload?.qualityMode);
     const withImagePayload = (extra = {}) => ({ ...payload, ...extra, qualityMode });
     const imageEditProviders = [
-      { name: "runway", enabled: Boolean(RUNWAY_API_SECRET), fn: () => callRunwayProvider(task, withImagePayload()) },
-      { name: "gemini", enabled: Boolean(GEMINI_API_KEY), fn: () => callGeminiProvider(task, withImagePayload()) }
+      ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
+      ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential))
     ];
     if (payload?.imageData) {
       return imageEditProviders;
     }
     if (qualityMode === "fast") {
       return [
-        { name: "together", enabled: Boolean(TOGETHER_API_KEY), fn: () => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_FAST_MODEL })) },
+        ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_FAST_MODEL }), credential)),
+        ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_MODEL }), credential)),
         { name: "pollinations", enabled: true, fn: () => callPollinationsProvider(task, withImagePayload()) },
-        { name: "gemini", enabled: Boolean(GEMINI_API_KEY), fn: () => callGeminiProvider(task, withImagePayload()) }
+        ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential))
       ];
     }
     if (qualityMode === "high") {
       return [
-        { name: "together", enabled: Boolean(TOGETHER_API_KEY), fn: () => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_HIGH_MODEL })) },
-        { name: "pixazo", enabled: Boolean(PIXAZO_API_KEY), fn: () => callPixazoProvider(task, withImagePayload()) },
-        { name: "fal", enabled: Boolean(FAL_KEY), fn: () => callFalProvider(task, withImagePayload()) },
-        { name: "runway", enabled: Boolean(RUNWAY_API_SECRET), fn: () => callRunwayProvider(task, withImagePayload()) },
-        { name: "gemini", enabled: Boolean(GEMINI_API_KEY), fn: () => callGeminiProvider(task, withImagePayload()) },
+        ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_HIGH_MODEL }), credential)),
+        ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
+        ...createCredentialAttempts("pixazo", PIXAZO_CREDENTIALS, (credential) => callPixazoProvider(task, withImagePayload(), credential)),
+        ...createCredentialAttempts("fal", FAL_CREDENTIALS, (credential) => callFalProvider(task, withImagePayload(), credential)),
+        ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential)),
+        ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
         { name: "pollinations", enabled: true, fn: () => callPollinationsProvider(task, withImagePayload()) }
       ];
     }
     return [
-      { name: "together", enabled: Boolean(TOGETHER_API_KEY), fn: () => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_BALANCED_MODEL })) },
-      { name: "together", enabled: Boolean(TOGETHER_API_KEY), fn: () => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_FAST_MODEL })) },
-      { name: "pixazo", enabled: Boolean(PIXAZO_API_KEY), fn: () => callPixazoProvider(task, withImagePayload()) },
-      { name: "gemini", enabled: Boolean(GEMINI_API_KEY), fn: () => callGeminiProvider(task, withImagePayload()) },
+      ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_BALANCED_MODEL }), credential)),
+      ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_FAST_MODEL }), credential)),
+      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_MODEL }), credential)),
+      ...createCredentialAttempts("pixazo", PIXAZO_CREDENTIALS, (credential) => callPixazoProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
       { name: "pollinations", enabled: true, fn: () => callPollinationsProvider(task, withImagePayload()) }
     ];
   }
 
   if (task === "coding") {
     return [
-      { name: "gemini", enabled: Boolean(GEMINI_API_KEY), fn: () => callGeminiProvider(task, payload) },
-      { name: "groq", enabled: Boolean(GROQ_API_KEY), fn: () => callGroqProvider(task, payload) },
-      { name: "deepseek", enabled: Boolean(DEEPSEEK_API_KEY), fn: () => callDeepSeekProvider(task, payload) },
-      { name: "together", enabled: Boolean(TOGETHER_API_KEY), fn: () => callTogetherProvider(task, payload) }
+      ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, payload, credential)),
+      ...createCredentialAttempts("deepseek", DEEPSEEK_CREDENTIALS, (credential) => callDeepSeekProvider(task, payload, credential)),
+      ...createCredentialAttempts("groq", GROQ_CREDENTIALS, (credential) => callGroqProvider(task, payload, credential)),
+      ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, payload, credential))
     ];
   }
 
   if (hasAttachment) {
-    return [
-      { name: "gemini", enabled: Boolean(GEMINI_API_KEY), fn: () => callGeminiProvider(task, payload) }
-    ];
+    return createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, payload, credential));
   }
 
   return [
-    { name: "gemini", enabled: Boolean(GEMINI_API_KEY), fn: () => callGeminiProvider(task, payload) },
-    { name: "groq", enabled: Boolean(GROQ_API_KEY), fn: () => callGroqProvider(task, payload) },
-    { name: "deepseek", enabled: Boolean(DEEPSEEK_API_KEY), fn: () => callDeepSeekProvider(task, payload) },
-    { name: "together", enabled: Boolean(TOGETHER_API_KEY), fn: () => callTogetherProvider(task, payload) }
+    ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, payload, credential)),
+    ...createCredentialAttempts("deepseek", DEEPSEEK_CREDENTIALS, (credential) => callDeepSeekProvider(task, payload, credential)),
+    ...createCredentialAttempts("groq", GROQ_CREDENTIALS, (credential) => callGroqProvider(task, payload, credential)),
+    ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, payload, credential))
   ];
 }
 
@@ -2070,28 +2569,29 @@ async function callWithFallback(task, payload) {
   const failures = [];
   const providers = providerPlanFor(task, payload);
 
+  if (!providers.length) {
+    throw new Error("No AI providers are configured on the server.");
+  }
+
   for (const provider of providers) {
-    if (!provider.enabled || isProviderCoolingDown(task, provider.name)) {
+    const cooldownName = provider.cooldownName || provider.name;
+    if (!provider.enabled || isProviderCoolingDown(task, cooldownName)) {
       continue;
     }
     try {
       const result = await provider.fn();
-      clearProviderCooldown(task, provider.name);
+      clearProviderCooldown(task, cooldownName);
       return { result };
     } catch (error) {
       failures.push(error);
-      setProviderCooldown(task, provider.name, error);
+      setProviderCooldown(task, cooldownName, error);
       if (!shouldUseBackup(error)) {
         throw error;
       }
     }
   }
 
-  if (!providers.some((provider) => provider.enabled)) {
-    throw new Error("No AI providers are configured on the server.");
-  }
-
-  if (failures.every((error) => error && (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK"))) {
+  if (failures.length && failures.every((error) => error && (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK"))) {
     throw new Error("This request type is not supported by the available providers.");
   }
   const unavailable = new Error("AI is unavailable right now. Please return later.");
@@ -2128,7 +2628,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && requestUrl.pathname === "/api/status") {
       sendJson(res, 200, {
         ok: true,
-        aiEnabled: Boolean(GEMINI_API_KEY || DEEPSEEK_API_KEY || GROQ_API_KEY || TOGETHER_API_KEY || FAL_KEY || RUNWAY_API_SECRET || PIXAZO_API_KEY),
+        aiEnabled: Boolean(
+          GEMINI_CREDENTIALS.length
+          || DEEPSEEK_CREDENTIALS.length
+          || GROQ_CREDENTIALS.length
+          || TOGETHER_CREDENTIALS.length
+          || FAL_CREDENTIALS.length
+          || RUNWAY_CREDENTIALS.length
+          || PIXAZO_CREDENTIALS.length
+          || XAI_CREDENTIALS.length
+        ),
         defaultModel: DEFAULT_MODEL,
         codingModel: CODING_MODEL
       });
@@ -2136,14 +2645,6 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && requestUrl.pathname === "/api/ai") {
-      if (!GEMINI_API_KEY && !DEEPSEEK_API_KEY && !GROQ_API_KEY && !TOGETHER_API_KEY && !FAL_KEY && !RUNWAY_API_SECRET && !PIXAZO_API_KEY) {
-        sendJson(res, 503, {
-          ok: false,
-          error: "No AI provider keys are configured on the server."
-        });
-        return;
-      }
-
       const body = await readJsonBody(req);
       const task = sanitizeString(body.task, 32).toLowerCase();
       const safetyPayload = { ...(body.payload || {}) };
