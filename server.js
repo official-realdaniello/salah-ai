@@ -80,12 +80,10 @@ const DEEPSEEK_CODING_MODEL = process.env.SALAH_AI_DEEPSEEK_CODING_MODEL || DEEP
 const GROQ_MODEL = process.env.SALAH_AI_GROQ_MODEL || "openai/gpt-oss-120b";
 const GROQ_CODING_MODEL = process.env.SALAH_AI_GROQ_CODING_MODEL || GROQ_MODEL;
 const TOGETHER_MODEL = process.env.SALAH_AI_TOGETHER_MODEL || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo";
-const TOGETHER_IMAGE_FAST_MODEL = process.env.SALAH_AI_TOGETHER_IMAGE_FAST_MODEL || "black-forest-labs/FLUX.1-schnell-Free";
-const TOGETHER_IMAGE_BALANCED_MODEL = process.env.SALAH_AI_TOGETHER_IMAGE_BALANCED_MODEL
+const TOGETHER_IMAGE_HIGH_MODEL = process.env.SALAH_AI_TOGETHER_IMAGE_HIGH_MODEL
   || process.env.SALAH_AI_TOGETHER_IMAGE_MODEL
   || "black-forest-labs/FLUX.1-krea-dev";
-const TOGETHER_IMAGE_HIGH_MODEL = process.env.SALAH_AI_TOGETHER_IMAGE_HIGH_MODEL || "black-forest-labs/FLUX.1-krea-dev";
-const TOGETHER_IMAGE_MODEL = TOGETHER_IMAGE_BALANCED_MODEL;
+const TOGETHER_IMAGE_MODEL = TOGETHER_IMAGE_HIGH_MODEL;
 const FAL_IMAGE_MODEL = process.env.SALAH_AI_FAL_IMAGE_MODEL || "fal-ai/flux/schnell";
 const RUNWAY_IMAGE_MODEL = process.env.SALAH_AI_RUNWAY_IMAGE_MODEL || "gen4_image_turbo";
 const PIXAZO_IMAGE_MODEL = process.env.SALAH_AI_PIXAZO_IMAGE_MODEL || "wan-2.5";
@@ -798,8 +796,7 @@ function shouldRetryGroqWithAnotherModel(error) {
 }
 
 function normalizeImageQualityMode(value) {
-  const mode = sanitizeString(value, 24).toLowerCase();
-  return mode === "fast" || mode === "high" ? mode : "balanced";
+  return "high";
 }
 
 function imagePromptWithQualityGuidance(payload) {
@@ -808,25 +805,12 @@ function imagePromptWithQualityGuidance(payload) {
     throw new Error("Image prompt is required.");
   }
 
-  const mode = normalizeImageQualityMode(payload.qualityMode);
-  const modeGuidance = mode === "fast"
-    ? "Keep the composition simple, clean, and fast to render."
-    : mode === "high"
-      ? "Prioritize polished final quality, strong composition, accurate details, clean lighting, and realistic textures."
-      : "Prioritize clean composition, solid detail, readable shapes, and natural lighting.";
-
+  const modeGuidance = "Prioritize polished final quality, strong composition, accurate details, clean lighting, realistic textures, and clear prompt adherence.";
   return sanitizeString(`${prompt}\n\nQuality guidance: ${modeGuidance}`, 2600);
 }
 
 function imageStepsForQualityMode(value) {
-  const mode = normalizeImageQualityMode(value);
-  if (mode === "fast") {
-    return 6;
-  }
-  if (mode === "high") {
-    return 28;
-  }
-  return 18;
+  return 28;
 }
 
 function providerCooldownMsForError(error) {
@@ -1531,11 +1515,7 @@ function imageAspectToPixazoSize(aspectRatio) {
 }
 
 function imageResolutionForQualityMode(value) {
-  const mode = normalizeImageQualityMode(value);
-  if (mode === "high") {
-    return "2k";
-  }
-  return "1k";
+  return "2k";
 }
 
 function normalizeGeminiFile(file, fallbackMimeType) {
@@ -1554,10 +1534,7 @@ function credentialValue(credential) {
 
 function xaiImageModelsToTry(payload) {
   const requestedModel = sanitizeModel(payload?.model, "");
-  const qualityMode = normalizeImageQualityMode(payload?.qualityMode);
-  const preferredModels = payload?.imageData || qualityMode === "high"
-    ? [XAI_IMAGE_PRO_MODEL, XAI_IMAGE_MODEL]
-    : [XAI_IMAGE_MODEL, XAI_IMAGE_PRO_MODEL];
+  const preferredModels = [XAI_IMAGE_PRO_MODEL, XAI_IMAGE_MODEL];
   return Array.from(new Set([requestedModel, ...preferredModels].filter(Boolean)));
 }
 
@@ -2526,41 +2503,22 @@ function createCredentialAttempts(providerName, credentials, createCall) {
 function providerPlanFor(task, payload) {
   const hasAttachment = Boolean(payload?.fileData);
   if (task === "image") {
-    const qualityMode = normalizeImageQualityMode(payload?.qualityMode);
-    const withImagePayload = (extra = {}) => ({ ...payload, ...extra, qualityMode });
+    const withImagePayload = (extra = {}) => ({ ...payload, ...extra, qualityMode: "high" });
     const imageEditProviders = [
-      ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
-      ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential))
+      ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential))
     ];
     if (payload?.imageData) {
       return imageEditProviders;
     }
-    if (qualityMode === "fast") {
-      return [
-        ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_FAST_MODEL }), credential)),
-        ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_MODEL }), credential)),
-        { name: "pollinations", enabled: true, fn: () => callPollinationsProvider(task, withImagePayload()) },
-        ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential))
-      ];
-    }
-    if (qualityMode === "high") {
-      return [
-        ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_HIGH_MODEL }), credential)),
-        ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
-        ...createCredentialAttempts("pixazo", PIXAZO_CREDENTIALS, (credential) => callPixazoProvider(task, withImagePayload(), credential)),
-        ...createCredentialAttempts("fal", FAL_CREDENTIALS, (credential) => callFalProvider(task, withImagePayload(), credential)),
-        ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential)),
-        ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
-        { name: "pollinations", enabled: true, fn: () => callPollinationsProvider(task, withImagePayload()) }
-      ];
-    }
     return [
-      ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_BALANCED_MODEL }), credential)),
-      ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_FAST_MODEL }), credential)),
-      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_MODEL }), credential)),
-      ...createCredentialAttempts("pixazo", PIXAZO_CREDENTIALS, (credential) => callPixazoProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
       ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_HIGH_MODEL }), credential)),
+      ...createCredentialAttempts("pixazo", PIXAZO_CREDENTIALS, (credential) => callPixazoProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("fal", FAL_CREDENTIALS, (credential) => callFalProvider(task, withImagePayload(), credential)),
       { name: "pollinations", enabled: true, fn: () => callPollinationsProvider(task, withImagePayload()) }
     ];
   }

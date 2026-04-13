@@ -253,16 +253,6 @@ const homeText = {
 
 copy.ar.nav.cv = "\u0635\u0627\u0646\u0639 \u0627\u0644\u0633\u064a\u0631\u0629";
 copy.ar.nav.ieee = "\u0645\u0648\u0644\u062f \u0648\u0631\u0642\u0629 IEEE";
-copy.en.images.qualityLabel = "Quality mode";
-copy.en.images.modeHint = "Fast gives quicker drafts, Balanced is the practical default, and High Quality uses slower stronger image routes.";
-copy.en.images.modes = { fast: "Fast", balanced: "Balanced", high: "High Quality" };
-copy.ar.images.qualityLabel = "\u0646\u0645\u0637 \u0627\u0644\u062c\u0648\u062f\u0629";
-copy.ar.images.modeHint = "\u0627\u0644\u0646\u0645\u0637 \u0627\u0644\u0633\u0631\u064a\u0639 \u0644\u0645\u0639\u0627\u064a\u0646\u0627\u062a \u0623\u0633\u0631\u0639\u060c \u0648\u0627\u0644\u0645\u062a\u0648\u0627\u0632\u0646 \u0647\u0648 \u0627\u0644\u0627\u062e\u062a\u064a\u0627\u0631 \u0627\u0644\u0639\u0645\u0644\u064a\u060c \u0623\u0645\u0627 \u0627\u0644\u062c\u0648\u062f\u0629 \u0627\u0644\u0639\u0627\u0644\u064a\u0629 \u0641\u062a\u064f\u0641\u0636\u0644 \u0645\u0633\u0627\u0631\u0627\u062a \u0623\u0642\u0648\u0649 \u0648\u0623\u0628\u0637\u0623.";
-copy.ar.images.modes = {
-  fast: "\u0633\u0631\u064a\u0639",
-  balanced: "\u0645\u062a\u0648\u0627\u0632\u0646",
-  high: "\u062c\u0648\u062f\u0629 \u0639\u0627\u0644\u064a\u0629"
-};
 homeText.en.cards.push({ key: "cv", title: "CV Creator", text: "Build a clean ATS-friendly CV, preview it, and export a polished PDF." });
 homeText.ar.cards.push({ key: "cv", title: "\u0635\u0627\u0646\u0639 \u0627\u0644\u0633\u064a\u0631\u0629", text: "\u0627\u0628\u0646\u0650 \u0633\u064a\u0631\u0629 \u0630\u0627\u062a\u064a\u0629 \u0646\u0638\u064a\u0641\u0629 \u0648\u0645\u062a\u0648\u0627\u0641\u0642\u0629 \u0645\u0639 \u0623\u0646\u0638\u0645\u0629 \u0627\u0644\u062a\u0648\u0638\u064a\u0641 \u0645\u0639 \u0645\u0639\u0627\u064a\u0646\u0629 \u0648PDF." });
 homeText.en.cards.push({ key: "ieee", title: "IEEE Paper Generator", text: "Draft a conference-style paper, switch between full and anonymous versions, and export clean PDFs." });
@@ -330,8 +320,7 @@ const defaultState = {
       prompt: "",
       fileName: "",
       imageData: "",
-      aspectRatio: "1:1",
-      qualityMode: "balanced"
+      aspectRatio: "1:1"
     }
   },
   cv: createCvState(),
@@ -2424,23 +2413,6 @@ function renderImagesResult() {
   `;
 }
 
-function renderImageQualityButtons() {
-  const modes = read("images.modes");
-  const currentMode = state.images.lastInput.qualityMode || "balanced";
-  return `
-    <div class="stack-form stack-form--compact">
-      <div class="segmented" role="group" aria-label="${escapeHtml(read("images.qualityLabel"))}">
-        ${["fast", "balanced", "high"].map((mode) => `
-          <button class="chip-button ${currentMode === mode ? "is-active" : ""}" data-image-quality="${mode}" type="button" aria-pressed="${currentMode === mode}">
-            ${escapeHtml(modes[mode])}
-          </button>
-        `).join("")}
-      </div>
-      <p class="muted-line">${escapeHtml(read("images.modeHint"))}</p>
-    </div>
-  `;
-}
-
 function renderImagesPage() {
   const last = state.images.lastInput;
   return `
@@ -2448,7 +2420,7 @@ function renderImagesPage() {
       <article class="surface editor-panel">
         <form class="stack-form" id="imagesForm">
           <textarea class="editor-area" id="imagesPrompt" rows="12" aria-label="${escapeHtml(uiWord("Image prompt", "طلب الصورة"))}" placeholder="${escapeHtml(read("images.placeholder"))}">${escapeHtml(last.prompt)}</textarea>
-          ${renderImageQualityButtons()}
+          <p class="muted-line">${escapeHtml(uiWord("Highest-quality route is selected automatically.", "يتم اختيار أفضل مسار جودة تلقائيًا."))}</p>
           <div class="form-row form-row--compact">
             <select id="imagesAspectRatio" aria-label="${escapeHtml(uiWord("Image aspect ratio", "نسبة أبعاد الصورة"))}">
               ${["1:1", "4:3", "3:4", "16:9", "9:16"].map((ratio) => `<option value="${ratio}" ${last.aspectRatio === ratio ? "selected" : ""}>${ratio}</option>`).join("")}
@@ -3653,8 +3625,7 @@ async function handleImagesForm(event) {
   await runImageRequest({
     mode: "generate",
     prompt,
-    aspectRatio: document.getElementById("imagesAspectRatio").value,
-    qualityMode: state.images.lastInput.qualityMode || "balanced"
+    aspectRatio: document.getElementById("imagesAspectRatio").value
   }, true);
 }
 
@@ -4001,13 +3972,6 @@ function bindImagesEvents() {
   document.getElementById("imagesPrompt")?.addEventListener("input", (event) => {
     state.images.lastInput.prompt = event.target.value;
     persist();
-  });
-  document.querySelectorAll("[data-image-quality]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.images.lastInput.qualityMode = button.getAttribute("data-image-quality") || "balanced";
-      persist();
-      renderApp({ transition: true });
-    });
   });
   document.getElementById("imagesAspectRatio")?.addEventListener("change", (event) => {
     state.images.lastInput.aspectRatio = event.target.value;
