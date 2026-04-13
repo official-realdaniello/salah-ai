@@ -1334,12 +1334,33 @@ function extractApiError(payload, fallbackMessage) {
 function makeTaggedError(message, options = {}) {
   const error = new Error(message);
   error.provider = options.provider || "";
+  error.providerAttempt = options.providerAttempt || "";
   error.status = options.status || 0;
   error.retryable = Boolean(options.retryable);
   error.rateLimited = Boolean(options.rateLimited);
   error.timedOut = Boolean(options.timedOut);
   error.code = options.code || "";
   return error;
+}
+
+function summarizeFailures(failures) {
+  const seen = new Set();
+  const items = [];
+  for (const failure of failures) {
+    const attempt = sanitizeString(failure?.providerAttempt || failure?.provider || "provider", 120);
+    const status = Number(failure?.status || 0);
+    const message = sanitizeString(failure?.message || "Unknown provider failure.", 180);
+    const label = `${attempt}${status ? ` [${status}]` : ""}: ${message}`;
+    if (!label || seen.has(label)) {
+      continue;
+    }
+    seen.add(label);
+    items.push(label);
+    if (items.length >= 6) {
+      break;
+    }
+  }
+  return items.join(" | ");
 }
 
 function shouldUseBackup(error) {
@@ -2583,6 +2604,12 @@ async function callWithFallback(task, payload) {
       clearProviderCooldown(task, cooldownName);
       return { result };
     } catch (error) {
+      if (error && !error.provider) {
+        error.provider = provider.name || "";
+      }
+      if (error && !error.providerAttempt) {
+        error.providerAttempt = sanitizeString(cooldownName || provider.name || "provider", 120);
+      }
       failures.push(error);
       setProviderCooldown(task, cooldownName, error);
       if (!shouldUseBackup(error)) {
@@ -2594,8 +2621,14 @@ async function callWithFallback(task, payload) {
   if (failures.length && failures.every((error) => error && (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK"))) {
     throw new Error("This request type is not supported by the available providers.");
   }
-  const unavailable = new Error("AI is unavailable right now. Please return later.");
+  const failureSummary = summarizeFailures(failures);
+  const unavailable = new Error(
+    failureSummary
+      ? `AI is unavailable right now. Provider failures: ${failureSummary}`
+      : "AI is unavailable right now. Please return later."
+  );
   unavailable.statusCode = 503;
+  unavailable.failures = failures;
   throw unavailable;
 }
 
