@@ -1486,6 +1486,56 @@ function decodeDataUrl(dataUrl) {
   };
 }
 
+function detectImageMimeType(bytes, headerMimeType = "") {
+  const header = sanitizeString(String(headerMimeType || "").split(";")[0], 120).toLowerCase();
+  if (header.startsWith("image/")) {
+    return header;
+  }
+
+  if (!bytes || !bytes.length) {
+    return header || "image/png";
+  }
+
+  if (bytes.length >= 8
+    && bytes[0] === 0x89
+    && bytes[1] === 0x50
+    && bytes[2] === 0x4e
+    && bytes[3] === 0x47
+    && bytes[4] === 0x0d
+    && bytes[5] === 0x0a
+    && bytes[6] === 0x1a
+    && bytes[7] === 0x0a) {
+    return "image/png";
+  }
+
+  if (bytes.length >= 3
+    && bytes[0] === 0xff
+    && bytes[1] === 0xd8
+    && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+
+  if (bytes.length >= 12
+    && bytes.toString("ascii", 0, 4) === "RIFF"
+    && bytes.toString("ascii", 8, 12) === "WEBP") {
+    return "image/webp";
+  }
+
+  if (bytes.length >= 6) {
+    const gifHeader = bytes.toString("ascii", 0, 6);
+    if (gifHeader === "GIF87a" || gifHeader === "GIF89a") {
+      return "image/gif";
+    }
+  }
+
+  const textPrefix = bytes.toString("utf8", 0, Math.min(bytes.length, 256)).trimStart();
+  if (textPrefix.startsWith("<svg") || textPrefix.startsWith("<?xml")) {
+    return "image/svg+xml";
+  }
+
+  return header || "image/png";
+}
+
 async function fetchArrayBufferWithTimeout(url, headers = {}, timeoutMs = PROVIDER_TIMEOUT_MS) {
   const response = await fetchWithTimeout(url, { method: "GET", headers }, timeoutMs);
   if (!response.ok) {
@@ -1495,9 +1545,10 @@ async function fetchArrayBufferWithTimeout(url, headers = {}, timeoutMs = PROVID
       retryable: response.status >= 500 || response.status === 429
     });
   }
+  const bytes = Buffer.from(await response.arrayBuffer());
   return {
-    mimeType: response.headers.get("content-type") || "application/octet-stream",
-    bytes: Buffer.from(await response.arrayBuffer())
+    mimeType: detectImageMimeType(bytes, response.headers.get("content-type") || ""),
+    bytes
   };
 }
 
