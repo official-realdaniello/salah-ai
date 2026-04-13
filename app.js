@@ -2439,11 +2439,13 @@ function renderImagesResult() {
   if (runtime.busy.images) {
     const progress = runtime.imagesProgress || {};
     const providerLabel = progress.currentProviderLabel || uiWord("AI provider", "مزود الذكاء");
+    const providerAttempt = progress.currentProviderAttempt || "";
     const attempts = Array.isArray(progress.attempts) ? progress.attempts.slice(-3) : [];
     return `
       <section class="content-block">
         <p class="muted-line"><strong>${escapeHtml(uiWord("Generating image...", "جارٍ إنشاء الصورة..."))}</strong></p>
         <p class="muted-line">${escapeHtml(uiWord(`Trying ${providerLabel}.`, `تجربة ${providerLabel}.`))}</p>
+        ${providerAttempt ? `<p class="muted-line">${escapeHtml(uiWord(`Current attempt: ${providerAttempt}`, `المحاولة الحالية: ${providerAttempt}`))}</p>` : ""}
         ${attempts.length ? `
           <p class="muted-line">${escapeHtml(uiWord("Recent provider updates:", "آخر تحديثات المزود:"))}</p>
           <div class="stack-form stack-form--compact">

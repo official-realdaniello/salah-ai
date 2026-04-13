@@ -68,6 +68,7 @@ const RUNWAY_CREDENTIALS = createCredentialPool("runway", "RUNWAY_API_SECRET", "
 const PIXAZO_CREDENTIALS = createCredentialPool("pixazo", "PIXAZO_API_KEY", "PIXAZO_API_KEYS");
 const XAI_CREDENTIALS = createCredentialPool("xai", "XAI_API_KEY", "XAI_API_KEYS");
 const EDENAI_CREDENTIALS = createCredentialPool("edenai", "EDENAI_API_KEY", "EDENAI_API_KEYS");
+const OPENAI_CREDENTIALS = createCredentialPool("openai", "OPENAI_API_KEY", "OPENAI_API_KEYS");
 const DEFAULT_MODEL = process.env.SALAH_AI_MODEL || "gemini-2.5-flash-lite";
 const CODING_MODEL = process.env.SALAH_AI_CODING_MODEL || DEFAULT_MODEL;
 const IMAGE_MODEL = process.env.SALAH_AI_IMAGE_MODEL || "gemini-2.5-flash-image";
@@ -96,6 +97,16 @@ const PIXAZO_IMAGE_MODEL = process.env.SALAH_AI_PIXAZO_IMAGE_MODEL || "gpt-image
 const PIXAZO_HIGGSFIELD_STYLE_ID = process.env.SALAH_AI_PIXAZO_HIGGSFIELD_STYLE_ID || "a5f63c3b-70eb-4979-af5e-98c7ee1e18e8";
 const XAI_IMAGE_MODEL = process.env.SALAH_AI_XAI_IMAGE_MODEL || "grok-imagine-image";
 const XAI_IMAGE_PRO_MODEL = process.env.SALAH_AI_XAI_IMAGE_PRO_MODEL || "grok-imagine-image-pro";
+const OPENAI_IMAGE_MODEL = process.env.SALAH_AI_OPENAI_IMAGE_MODEL || "gpt-image-1.5";
+const DEFAULT_OPENAI_IMAGE_MODEL_FALLBACKS = [
+  "gpt-image-1.5",
+  "gpt-image-1",
+  "gpt-image-1-mini"
+];
+const OPENAI_IMAGE_MODEL_FALLBACKS = Array.from(new Set([
+  sanitizeModel(OPENAI_IMAGE_MODEL, ""),
+  ...createModelPriorityList(process.env.SALAH_AI_OPENAI_IMAGE_MODELS, DEFAULT_OPENAI_IMAGE_MODEL_FALLBACKS)
+].filter(Boolean)));
 const DEFAULT_XAI_IMAGE_MODEL_FALLBACKS = [
   "grok-imagine-image",
   "grok-imagine-image-pro"
@@ -117,6 +128,7 @@ const RUNWAY_API_BASE = "https://api.dev.runwayml.com";
 const PIXAZO_GATEWAY_BASE = "https://gateway.pixazo.ai";
 const XAI_API_BASE = "https://api.x.ai/v1";
 const EDENAI_API_BASE = "https://api.edenai.run/v3";
+const OPENAI_API_BASE = "https://api.openai.com/v1";
 const POLLINATIONS_IMAGE_BASE = "https://image.pollinations.ai/prompt";
 const FILE_POLL_ATTEMPTS = 12;
 const FILE_POLL_DELAY_MS = 1200;
@@ -245,6 +257,8 @@ function providerDisplayName(providerName) {
   switch (sanitizeString(providerName, 40).toLowerCase()) {
     case "xai":
       return "xAI";
+    case "openai":
+      return "OpenAI";
     case "gemini":
       return "Gemini";
     case "deepseek":
@@ -289,6 +303,7 @@ function serializeImageJob(job) {
     updatedAt: job.updatedAt,
     currentProvider: sanitizeString(job.currentProvider, 40),
     currentProviderLabel: sanitizeString(job.currentProviderLabel, 60),
+    currentProviderAttempt: sanitizeString(job.currentProviderAttempt, 120),
     attemptCount: Array.isArray(job.attempts) ? job.attempts.length : 0,
     attempts: Array.isArray(job.attempts) ? job.attempts.slice(-6).map((attempt) => ({
       provider: sanitizeString(attempt.provider, 40),
@@ -927,6 +942,57 @@ function edenImageModelsToTry(payload) {
     sanitizeModel(payload?.model, ""),
     ...EDEN_IMAGE_MODEL_FALLBACKS
   ].filter(Boolean)));
+}
+
+function openAiImageModelsToTry(payload) {
+  return Array.from(new Set([
+    sanitizeModel(payload?.model, ""),
+    ...OPENAI_IMAGE_MODEL_FALLBACKS
+  ].filter(Boolean)));
+}
+
+function openAiImageModelCooldownName(credential, modelName) {
+  const safeModel = sanitizeModel(modelName, "");
+  if (!safeModel) {
+    return "";
+  }
+  return `openai:${sanitizeString(credential?.id, 80) || "default"}:${safeModel}`;
+}
+
+function shouldRetryOpenAiWithAnotherModel(error) {
+  if (!error) {
+    return false;
+  }
+  if (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK") {
+    return false;
+  }
+  if ([401, 402].includes(Number(error.status || 0))) {
+    return false;
+  }
+
+  const text = String(error.message || "").toLowerCase();
+  if (
+    text.includes("api key")
+    || text.includes("authentication")
+    || text.includes("billing hard limit")
+    || text.includes("insufficient_quota")
+  ) {
+    return false;
+  }
+  if (
+    Number(error.status || 0) === 403
+    && (
+      text.includes("permission denied")
+      || text.includes("not allowed")
+      || text.includes("organization")
+      || text.includes("verification")
+      || text.includes("project")
+    )
+    && !text.includes("model")
+  ) {
+    return false;
+  }
+  return shouldUseBackup(error);
 }
 
 function edenImageModelCooldownName(credential, modelName) {
@@ -1958,6 +2024,19 @@ function imageAspectToEdenResolution(aspectRatio) {
       return "1344x768";
     case "9:16":
       return "768x1344";
+    default:
+      return "1024x1024";
+  }
+}
+
+function imageAspectToOpenAiSize(aspectRatio) {
+  switch (sanitizeString(aspectRatio, 10)) {
+    case "4:3":
+    case "16:9":
+      return "1536x1024";
+    case "3:4":
+    case "9:16":
+      return "1024x1536";
     default:
       return "1024x1024";
   }
@@ -3163,6 +3242,110 @@ async function callEdenProvider(task, payload, credential) {
   throw lastError || makeTaggedError("Eden AI image generation failed.", { provider: "edenai", retryable: true });
 }
 
+async function callOpenAiProvider(task, payload, credential) {
+  if (task !== "image") {
+    throw makeTaggedError("This request type is not available in the current image provider.", { provider: "openai", code: "UNSUPPORTED_TASK" });
+  }
+
+  if (payload.imageData) {
+    throw makeTaggedError("Reference-image editing is disabled for the current image flow in this app.", {
+      provider: "openai",
+      code: "UNSUPPORTED_ATTACHMENT"
+    });
+  }
+
+  const apiKey = credentialValue(credential);
+  const prompt = imagePromptWithQualityGuidance(payload);
+  const modelsToTry = openAiImageModelsToTry(payload);
+  let lastError = null;
+
+  for (const modelName of modelsToTry) {
+    const cooldownName = openAiImageModelCooldownName(credential, modelName);
+    if (cooldownName && isProviderCoolingDown(task, cooldownName)) {
+      continue;
+    }
+
+    const response = await fetchWithTimeout(`${OPENAI_API_BASE}/images/generations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: modelName,
+        prompt,
+        size: imageAspectToOpenAiSize(payload.aspectRatio),
+        background: "auto",
+        quality: "high",
+        moderation: "auto",
+        n: 1,
+        output_format: "png"
+      })
+    }, PROVIDER_TIMEOUT_MS + 25000);
+
+    const raw = await readResponsePayload(response);
+    if (!response.ok) {
+      const errorMessage = extractApiError(raw, "OpenAI image generation failed.");
+      const error = makeTaggedError(errorMessage, {
+        provider: "openai",
+        providerAttempt: `${sanitizeString(credential?.id, 80) || "openai"}:${modelName}`,
+        status: response.status,
+        rateLimited: response.status === 429 || String(errorMessage).toLowerCase().includes("rate limit"),
+        retryable: response.status >= 500 || response.status === 404 || response.status === 409 || response.status === 425 || response.status === 429
+      });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryOpenAiWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    const image = normalizeBase64ImageString(raw?.data?.[0]?.b64_json);
+    if (image) {
+      if (cooldownName) {
+        clearProviderCooldown(task, cooldownName);
+      }
+      return {
+        caption: sanitizeString(raw?.data?.[0]?.revised_prompt || "", 1200),
+        mimeType: "image/png",
+        imageDataUrl: `data:image/png;base64,${image}`
+      };
+    }
+
+    const imageUrl = sanitizeString(raw?.data?.[0]?.url, 600);
+    if (imageUrl) {
+      const download = await fetchArrayBufferWithTimeout(imageUrl);
+      if (cooldownName) {
+        clearProviderCooldown(task, cooldownName);
+      }
+      return {
+        caption: sanitizeString(raw?.data?.[0]?.revised_prompt || "", 1200),
+        mimeType: download.mimeType,
+        imageDataUrl: `data:${download.mimeType};base64,${download.bytes.toString("base64")}`
+      };
+    }
+
+    const error = makeTaggedError("OpenAI did not return an image.", {
+      provider: "openai",
+      providerAttempt: `${sanitizeString(credential?.id, 80) || "openai"}:${modelName}`,
+      retryable: true
+    });
+    lastError = error;
+    if (cooldownName) {
+      setProviderCooldown(task, cooldownName, error);
+    }
+    if (shouldRetryOpenAiWithAnotherModel(error)) {
+      continue;
+    }
+    throw error;
+  }
+
+  throw lastError || makeTaggedError("OpenAI image generation failed.", { provider: "openai", retryable: true });
+}
+
 async function callPollinationsProvider(task, payload) {
   if (task !== "image") {
     throw makeTaggedError("This request type is not available in the current image provider.", { provider: "pollinations", code: "UNSUPPORTED_TASK" });
@@ -3304,6 +3487,7 @@ function providerPlanFor(task, payload) {
       qualityMode: "high"
     });
     return [
+      ...createCredentialAttempts("openai", OPENAI_CREDENTIALS, (credential) => callOpenAiProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("edenai", EDENAI_CREDENTIALS, (credential) => callEdenProvider(task, withImagePayload(), credential)),
@@ -3410,6 +3594,7 @@ function createImageJob(payload) {
     updatedAt: Date.now(),
     currentProvider: "",
     currentProviderLabel: "",
+    currentProviderAttempt: "",
     attempts: [],
     result: null,
     error: ""
@@ -3424,6 +3609,7 @@ function createImageJob(payload) {
         onAttemptStart(attempt) {
           job.currentProvider = sanitizeString(attempt.provider, 40);
           job.currentProviderLabel = sanitizeString(attempt.providerLabel, 60);
+          job.currentProviderAttempt = sanitizeString(attempt.providerAttempt, 120);
           job.updatedAt = Date.now();
         },
         onAttemptFailure(attempt) {
@@ -3441,6 +3627,7 @@ function createImageJob(payload) {
       job.status = "completed";
       job.currentProvider = sanitizeString(output.provider, 40);
       job.currentProviderLabel = sanitizeString(output.providerLabel, 60);
+      job.currentProviderAttempt = "";
       job.result = {
         ...(output.result || {}),
         provider: sanitizeString(output.provider, 40),
@@ -3508,6 +3695,7 @@ const server = http.createServer(async (req, res) => {
           || PIXAZO_CREDENTIALS.length
           || XAI_CREDENTIALS.length
           || EDENAI_CREDENTIALS.length
+          || OPENAI_CREDENTIALS.length
         ),
         defaultModel: DEFAULT_MODEL,
         codingModel: CODING_MODEL
