@@ -67,6 +67,7 @@ const FAL_CREDENTIALS = createCredentialPool("fal", "FAL_KEY", "FAL_KEYS");
 const RUNWAY_CREDENTIALS = createCredentialPool("runway", "RUNWAY_API_SECRET", "RUNWAY_API_SECRETS");
 const PIXAZO_CREDENTIALS = createCredentialPool("pixazo", "PIXAZO_API_KEY", "PIXAZO_API_KEYS");
 const XAI_CREDENTIALS = createCredentialPool("xai", "XAI_API_KEY", "XAI_API_KEYS");
+const EDENAI_CREDENTIALS = createCredentialPool("edenai", "EDENAI_API_KEY", "EDENAI_API_KEYS");
 const DEFAULT_MODEL = process.env.SALAH_AI_MODEL || "gemini-2.5-flash-lite";
 const CODING_MODEL = process.env.SALAH_AI_CODING_MODEL || DEFAULT_MODEL;
 const IMAGE_MODEL = process.env.SALAH_AI_IMAGE_MODEL || "gemini-2.5-flash-image";
@@ -87,7 +88,9 @@ const TOGETHER_IMAGE_HIGH_MODEL = process.env.SALAH_AI_TOGETHER_IMAGE_HIGH_MODEL
 const TOGETHER_IMAGE_MODEL = TOGETHER_IMAGE_HIGH_MODEL;
 const FAL_IMAGE_MODEL = process.env.SALAH_AI_FAL_IMAGE_MODEL || "fal-ai/flux/schnell";
 const RUNWAY_IMAGE_MODEL = process.env.SALAH_AI_RUNWAY_IMAGE_MODEL || "gen4_image_turbo";
-const PIXAZO_IMAGE_MODEL = process.env.SALAH_AI_PIXAZO_IMAGE_MODEL || "wan-2.5";
+const EDENAI_IMAGE_MODEL = process.env.SALAH_AI_EDEN_IMAGE_MODEL || "image/generation/google/imagen-3";
+const PIXAZO_IMAGE_MODEL = process.env.SALAH_AI_PIXAZO_IMAGE_MODEL || "gpt-image-1.5";
+const PIXAZO_HIGGSFIELD_STYLE_ID = process.env.SALAH_AI_PIXAZO_HIGGSFIELD_STYLE_ID || "a5f63c3b-70eb-4979-af5e-98c7ee1e18e8";
 const XAI_IMAGE_MODEL = process.env.SALAH_AI_XAI_IMAGE_MODEL || "grok-imagine-image";
 const XAI_IMAGE_PRO_MODEL = process.env.SALAH_AI_XAI_IMAGE_PRO_MODEL || "grok-imagine-image-pro";
 const POLLINATIONS_IMAGE_MODEL = process.env.SALAH_AI_POLLINATIONS_IMAGE_MODEL || "flux";
@@ -101,6 +104,7 @@ const FAL_QUEUE_BASE = "https://queue.fal.run";
 const RUNWAY_API_BASE = "https://api.dev.runwayml.com";
 const PIXAZO_GATEWAY_BASE = "https://gateway.pixazo.ai";
 const XAI_API_BASE = "https://api.x.ai/v1";
+const EDENAI_API_BASE = "https://api.edenai.run/v3";
 const POLLINATIONS_IMAGE_BASE = "https://image.pollinations.ai/prompt";
 const FILE_POLL_ATTEMPTS = 12;
 const FILE_POLL_DELAY_MS = 1200;
@@ -241,6 +245,8 @@ function providerDisplayName(providerName) {
       return "Runway";
     case "pixazo":
       return "Pixazo";
+    case "edenai":
+      return "Eden AI";
     case "fal":
       return "fal";
     case "pollinations":
@@ -742,6 +748,35 @@ const GROQ_CODING_MODEL_FALLBACKS = Array.from(new Set([
   ...createModelPriorityList(process.env.SALAH_AI_GROQ_CODING_MODELS, DEFAULT_GROQ_TEXT_MODEL_FALLBACKS)
 ].filter(Boolean)));
 
+const DEFAULT_EDEN_IMAGE_MODEL_FALLBACKS = [
+  "image/generation/google/imagen-3",
+  "image/generation/openai/gpt-image-1",
+  "image/generation/openai/dall-e-3",
+  "image/generation/minimax/image-01",
+  "image/generation/stabilityai/stable-image-ultra",
+  "image/generation/stabilityai/stable-image-core",
+  "image/generation/google",
+  "image/generation/openai",
+  "image/generation/stabilityai"
+];
+
+const EDEN_IMAGE_MODEL_FALLBACKS = Array.from(new Set([
+  sanitizeModel(EDENAI_IMAGE_MODEL, ""),
+  ...createModelPriorityList(process.env.SALAH_AI_EDEN_IMAGE_MODELS, DEFAULT_EDEN_IMAGE_MODEL_FALLBACKS)
+].filter(Boolean)));
+
+const DEFAULT_PIXAZO_IMAGE_MODEL_FALLBACKS = [
+  "gpt-image-1.5",
+  "higgsfield-v1",
+  "longcat-v1",
+  "wan-2.5"
+];
+
+const PIXAZO_IMAGE_MODEL_FALLBACKS = Array.from(new Set([
+  sanitizeModel(PIXAZO_IMAGE_MODEL, ""),
+  ...createModelPriorityList(process.env.SALAH_AI_PIXAZO_IMAGE_MODELS, DEFAULT_PIXAZO_IMAGE_MODEL_FALLBACKS)
+].filter(Boolean)));
+
 function geminiModelFallbacksForTask(task) {
   return task === "coding" ? GEMINI_CODING_MODEL_FALLBACKS : GEMINI_TEXT_MODEL_FALLBACKS;
 }
@@ -851,6 +886,86 @@ function shouldRetryGroqWithAnotherModel(error) {
     || text.includes("permission denied")
     || text.includes("project")
     || text.includes("organization")
+  ) {
+    return false;
+  }
+  return shouldUseBackup(error);
+}
+
+function edenImageModelsToTry(payload) {
+  return Array.from(new Set([
+    sanitizeModel(payload?.model, ""),
+    ...EDEN_IMAGE_MODEL_FALLBACKS
+  ].filter(Boolean)));
+}
+
+function edenImageModelCooldownName(credential, modelName) {
+  const safeModel = sanitizeModel(modelName, "");
+  if (!safeModel) {
+    return "";
+  }
+  return `edenai:${sanitizeString(credential?.id, 80) || "default"}:${safeModel}`;
+}
+
+function shouldRetryEdenWithAnotherModel(error) {
+  if (!error) {
+    return false;
+  }
+  if (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK") {
+    return false;
+  }
+  if ([401, 402, 403].includes(Number(error.status || 0))) {
+    return false;
+  }
+
+  const text = String(error.message || "").toLowerCase();
+  if (
+    text.includes("api key")
+    || text.includes("authentication")
+    || text.includes("permission denied")
+    || text.includes("insufficient credit")
+    || text.includes("insufficient balance")
+    || text.includes("billing")
+  ) {
+    return false;
+  }
+  return shouldUseBackup(error);
+}
+
+function pixazoImageModelsToTry(payload) {
+  return Array.from(new Set([
+    sanitizeModel(payload?.model, ""),
+    ...PIXAZO_IMAGE_MODEL_FALLBACKS
+  ].filter(Boolean)));
+}
+
+function pixazoImageModelCooldownName(credential, modelName) {
+  const safeModel = sanitizeModel(modelName, "");
+  if (!safeModel) {
+    return "";
+  }
+  return `pixazo:${sanitizeString(credential?.id, 80) || "default"}:${safeModel}`;
+}
+
+function shouldRetryPixazoWithAnotherModel(error) {
+  if (!error) {
+    return false;
+  }
+  if (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK") {
+    return false;
+  }
+  if ([401, 402, 403].includes(Number(error.status || 0))) {
+    return false;
+  }
+
+  const text = String(error.message || "").toLowerCase();
+  if (
+    text.includes("api key")
+    || text.includes("authentication")
+    || text.includes("subscription")
+    || text.includes("permission denied")
+    || text.includes("filtered")
+    || text.includes("safety")
   ) {
     return false;
   }
@@ -1552,6 +1667,167 @@ async function fetchArrayBufferWithTimeout(url, headers = {}, timeoutMs = PROVID
   };
 }
 
+function normalizeBase64ImageString(value) {
+  const candidate = sanitizeString(value, MAX_BODY_SIZE * 4).replace(/\s+/g, "");
+  if (!candidate || candidate.length < 80 || candidate.length % 4 === 1) {
+    return "";
+  }
+  if (/[^A-Za-z0-9+/=]/.test(candidate)) {
+    return "";
+  }
+  return candidate;
+}
+
+function parseImageResourceCandidate(value, hintedKey = "") {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const candidate = sanitizeString(value, MAX_BODY_SIZE * 4);
+  if (!candidate) {
+    return null;
+  }
+  if (/^data:image\//i.test(candidate)) {
+    return { kind: "data-url", value: candidate };
+  }
+  if (/^https?:\/\//i.test(candidate)) {
+    return { kind: "url", value: candidate };
+  }
+
+  const base64 = normalizeBase64ImageString(candidate);
+  if (base64 && /(image|b64|base64|data|artifact|content)/i.test(hintedKey || "")) {
+    return { kind: "base64", value: base64 };
+  }
+  return null;
+}
+
+function findImageResourceDeep(value, depth = 0, seen = new Set()) {
+  if (!value || depth > 5) {
+    return null;
+  }
+
+  const direct = parseImageResourceCandidate(value);
+  if (direct) {
+    return direct;
+  }
+  if (typeof value !== "object") {
+    return null;
+  }
+  if (seen.has(value)) {
+    return null;
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 12)) {
+      const match = findImageResourceDeep(item, depth + 1, seen);
+      if (match) {
+        return match;
+      }
+    }
+    return null;
+  }
+
+  const priorityKeys = [
+    "imageDataUrl",
+    "image_resource_url",
+    "image_url",
+    "imageUrl",
+    "url",
+    "b64_json",
+    "base64",
+    "image_base64",
+    "image",
+    "images",
+    "artifacts",
+    "data",
+    "output",
+    "result"
+  ];
+
+  for (const key of priorityKeys) {
+    if (!(key in value)) {
+      continue;
+    }
+    const match = parseImageResourceCandidate(value[key], key) || findImageResourceDeep(value[key], depth + 1, seen);
+    if (match) {
+      return match;
+    }
+  }
+
+  for (const [key, child] of Object.entries(value).slice(0, 16)) {
+    if (priorityKeys.includes(key)) {
+      continue;
+    }
+    if (depth > 1 && !/(image|url|data|artifact|result|content|output)/i.test(key)) {
+      continue;
+    }
+    const match = parseImageResourceCandidate(child, key) || findImageResourceDeep(child, depth + 1, seen);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function resolveEdenImageResource(payload) {
+  const directCandidates = [
+    payload?.output?.items?.[0]?.image_resource_url,
+    payload?.output?.items?.[0]?.image_url,
+    payload?.output?.items?.[0]?.url,
+    payload?.output?.images?.[0]?.url,
+    payload?.output?.images?.[0]?.image_url,
+    payload?.output?.image?.url,
+    payload?.output?.image_url,
+    payload?.output?.url,
+    payload?.original_response?.data?.[0]?.b64_json,
+    payload?.original_response?.data?.[0]?.url,
+    payload?.original_response?.images?.[0]?.url,
+    payload?.original_response?.image_url
+  ];
+
+  for (const candidate of directCandidates) {
+    const match = parseImageResourceCandidate(candidate, "image");
+    if (match) {
+      return match;
+    }
+  }
+
+  return findImageResourceDeep(payload?.output)
+    || findImageResourceDeep(payload?.original_response)
+    || findImageResourceDeep(payload);
+}
+
+async function materializeImageResource(resource, fallbackMimeType = "image/png") {
+  if (!resource || !resource.kind || !resource.value) {
+    throw new Error("The image provider did not return a usable image.");
+  }
+
+  if (resource.kind === "data-url") {
+    const parsed = decodeDataUrl(resource.value);
+    return {
+      mimeType: parsed.mimeType || fallbackMimeType,
+      imageDataUrl: resource.value
+    };
+  }
+
+  if (resource.kind === "base64") {
+    const bytes = Buffer.from(resource.value, "base64");
+    const mimeType = detectImageMimeType(bytes, fallbackMimeType);
+    return {
+      mimeType,
+      imageDataUrl: `data:${mimeType};base64,${bytes.toString("base64")}`
+    };
+  }
+
+  const download = await fetchArrayBufferWithTimeout(resource.value);
+  return {
+    mimeType: download.mimeType,
+    imageDataUrl: `data:${download.mimeType};base64,${download.bytes.toString("base64")}`
+  };
+}
+
 function imageAspectToFalSize(aspectRatio) {
   switch (sanitizeString(aspectRatio, 10)) {
     case "4:3":
@@ -1612,7 +1888,67 @@ function imageAspectToPollinationsDimensions(aspectRatio) {
   }
 }
 
-function imageAspectToPixazoSize(aspectRatio) {
+function imageAspectToEdenResolution(aspectRatio) {
+  switch (sanitizeString(aspectRatio, 10)) {
+    case "4:3":
+      return "1152x864";
+    case "3:4":
+      return "864x1152";
+    case "16:9":
+      return "1344x768";
+    case "9:16":
+      return "768x1344";
+    default:
+      return "1024x1024";
+  }
+}
+
+function imageAspectToPixazoGptSize(aspectRatio) {
+  switch (sanitizeString(aspectRatio, 10)) {
+    case "4:3":
+      return "1152x864";
+    case "3:4":
+      return "864x1152";
+    case "16:9":
+      return "1344x768";
+    case "9:16":
+      return "768x1344";
+    default:
+      return "1024x1024";
+  }
+}
+
+function imageAspectToPixazoHiggsfieldSize(aspectRatio) {
+  switch (sanitizeString(aspectRatio, 10)) {
+    case "4:3":
+      return "1536x1152";
+    case "3:4":
+      return "1152x1536";
+    case "16:9":
+      return "1536x864";
+    case "9:16":
+      return "864x1536";
+    default:
+      return "1024x1024";
+  }
+}
+
+function imageAspectToPixazoLongCatSize(aspectRatio) {
+  switch (sanitizeString(aspectRatio, 10)) {
+    case "4:3":
+      return "landscape_4_3";
+    case "3:4":
+      return "portrait_4_3";
+    case "16:9":
+      return "landscape_16_9";
+    case "9:16":
+      return "portrait_16_9";
+    default:
+      return "square";
+  }
+}
+
+function imageAspectToPixazoLegacySize(aspectRatio) {
   switch (sanitizeString(aspectRatio, 10)) {
     case "4:3":
       return "1280*960";
@@ -2274,7 +2610,11 @@ async function callRunwayProvider(task, payload, credential) {
 function resolvePixazoImageUrl(payload) {
   return sanitizeString(
     payload?.output?.results?.[0]?.url
+      || payload?.output?.images?.[0]?.url
+      || payload?.output?.images?.[0]?.image_url
+      || payload?.output?.artifacts?.[0]?.url
       || payload?.result?.output?.results?.[0]?.url
+      || payload?.result?.output?.images?.[0]?.url
       || payload?.output_url
       || payload?.image_url
       || payload?.result?.output_url
@@ -2299,81 +2639,223 @@ async function callPixazoProvider(task, payload, credential) {
   }
 
   const prompt = imagePromptWithQualityGuidance(payload);
+  const modelsToTry = pixazoImageModelsToTry(payload);
+  let lastError = null;
 
-  const response = await fetchWithTimeout(`${PIXAZO_GATEWAY_BASE}/wan-image-2-5/v1/generateTextToImage2-5Request`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-cache",
-      "Ocp-Apim-Subscription-Key": apiKey
-    },
-    body: JSON.stringify({
-      prompt,
-      size: imageAspectToPixazoSize(payload.aspectRatio),
-      prompt_extend: true,
-      watermark: false,
-      n: 1
-    })
-  }, PROVIDER_TIMEOUT_MS + 12000);
-
-  const raw = await readResponsePayload(response);
-  if (!response.ok) {
-    throw makeTaggedError(extractApiError(raw, "Pixazo image generation failed."), {
-      provider: "pixazo",
-      status: response.status,
-      rateLimited: response.status === 429,
-      retryable: response.status >= 500 || response.status === 429
-    });
-  }
-
-  const taskId = sanitizeString(raw?.request_id || raw?.task_id, 160);
-  const pollingUrl = sanitizeString(raw?.polling_url, 600);
-  if (!taskId) {
-    throw makeTaggedError("Pixazo did not return a task id.", { provider: "pixazo", retryable: true });
-  }
-
-  let imageUrl = resolvePixazoImageUrl(raw);
-  for (let attempt = 0; !imageUrl && attempt < FILE_POLL_ATTEMPTS; attempt += 1) {
-    await sleep(FILE_POLL_DELAY_MS);
-    const statusResponse = await fetchWithTimeout(
-      pollingUrl || `${PIXAZO_GATEWAY_BASE}/v2/requests/status/${encodeURIComponent(taskId)}`,
-      {
-        method: "GET",
-        headers: {
-          "Cache-Control": "no-cache",
-          "Ocp-Apim-Subscription-Key": apiKey
-        }
-      },
-      PROVIDER_TIMEOUT_MS
-    );
-    const statusPayload = await readResponsePayload(statusResponse);
-    if (!statusResponse.ok) {
-      throw makeTaggedError(extractApiError(statusPayload, "Pixazo status lookup failed."), {
-        provider: "pixazo",
-        status: statusResponse.status,
-        retryable: statusResponse.status >= 500 || statusResponse.status === 429
-      });
+  for (const modelName of modelsToTry) {
+    const cooldownName = pixazoImageModelCooldownName(credential, modelName);
+    if (cooldownName && isProviderCoolingDown(task, cooldownName)) {
+      continue;
     }
-    imageUrl = resolvePixazoImageUrl(statusPayload);
-    const taskStatus = sanitizeString(statusPayload?.output?.task_status || statusPayload?.task_status || statusPayload?.status, 40).toUpperCase();
-    if (!imageUrl && (taskStatus === "FAILED" || taskStatus === "ERROR" || taskStatus === "CANCELLED")) {
-      throw makeTaggedError(extractApiError(statusPayload, "Pixazo did not complete the image request."), {
+
+    let response;
+    switch (modelName) {
+      case "gpt-image-1.5":
+        response = await fetchWithTimeout(`${PIXAZO_GATEWAY_BASE}/gpt-image-1-5-api-923/v1/gpt-image-1-5-api-request`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
+            "Ocp-Apim-Subscription-Key": apiKey
+          },
+          body: JSON.stringify({
+            prompt,
+            image_size: imageAspectToPixazoGptSize(payload.aspectRatio),
+            background: "auto",
+            quality: "high",
+            num_images: 1,
+            output_format: "png"
+          })
+        }, PROVIDER_TIMEOUT_MS + 12000);
+        break;
+      case "higgsfield-v1":
+        response = await fetchWithTimeout(`${PIXAZO_GATEWAY_BASE}/ai-model-api/v1/generateSoul`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
+            "Ocp-Apim-Subscription-Key": apiKey
+          },
+          body: JSON.stringify({
+            prompt,
+            soul_style_id: sanitizeString(PIXAZO_HIGGSFIELD_STYLE_ID, 80),
+            width_and_height: imageAspectToPixazoHiggsfieldSize(payload.aspectRatio)
+          })
+        }, PROVIDER_TIMEOUT_MS + 12000);
+        break;
+      case "longcat-v1":
+        response = await fetchWithTimeout(`${PIXAZO_GATEWAY_BASE}/longcat-image-498/v1/longcat-image-request`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
+            "Ocp-Apim-Subscription-Key": apiKey
+          },
+          body: JSON.stringify({
+            prompt,
+            image_size: imageAspectToPixazoLongCatSize(payload.aspectRatio),
+            num_inference_steps: 28,
+            guidance_scale: 4.5,
+            num_images: 1,
+            enable_safety_checker: true,
+            output_format: "png",
+            acceleration: "regular"
+          })
+        }, PROVIDER_TIMEOUT_MS + 12000);
+        break;
+      case "wan-2.5":
+        response = await fetchWithTimeout(`${PIXAZO_GATEWAY_BASE}/wan-image-2-5/v1/generateTextToImage2-5Request`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
+            "Ocp-Apim-Subscription-Key": apiKey
+          },
+          body: JSON.stringify({
+            prompt,
+            size: imageAspectToPixazoLegacySize(payload.aspectRatio),
+            prompt_extend: true,
+            watermark: false,
+            n: 1
+          })
+        }, PROVIDER_TIMEOUT_MS + 12000);
+        break;
+      default: {
+        const error = makeTaggedError(`Unsupported Pixazo image model: ${modelName}.`, {
+          provider: "pixazo",
+          providerAttempt: `${sanitizeString(credential?.id, 80) || "pixazo"}:${modelName}`,
+          retryable: true
+        });
+        lastError = error;
+        if (cooldownName) {
+          setProviderCooldown(task, cooldownName, error);
+        }
+        if (shouldRetryPixazoWithAnotherModel(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    const raw = await readResponsePayload(response);
+    if (!response.ok) {
+      const errorMessage = extractApiError(raw, "Pixazo image generation failed.");
+      const error = makeTaggedError(errorMessage, {
         provider: "pixazo",
+        providerAttempt: `${sanitizeString(credential?.id, 80) || "pixazo"}:${modelName}`,
+        status: response.status,
+        rateLimited: response.status === 429,
+        retryable: response.status >= 500 || response.status === 429 || response.status === 422
+      });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryPixazoWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    const taskId = sanitizeString(raw?.request_id || raw?.task_id, 160);
+    const pollingUrl = sanitizeString(raw?.polling_url, 600);
+    if (!taskId && !resolvePixazoImageUrl(raw)) {
+      const error = makeTaggedError("Pixazo did not return a task id.", {
+        provider: "pixazo",
+        providerAttempt: `${sanitizeString(credential?.id, 80) || "pixazo"}:${modelName}`,
         retryable: true
       });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryPixazoWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
     }
+
+    let imageUrl = resolvePixazoImageUrl(raw);
+    for (let attempt = 0; !imageUrl && attempt < FILE_POLL_ATTEMPTS; attempt += 1) {
+      await sleep(FILE_POLL_DELAY_MS);
+      const statusResponse = await fetchWithTimeout(
+        pollingUrl || `${PIXAZO_GATEWAY_BASE}/v2/requests/status/${encodeURIComponent(taskId)}`,
+        {
+          method: "GET",
+          headers: {
+            "Cache-Control": "no-cache",
+            "Ocp-Apim-Subscription-Key": apiKey
+          }
+        },
+        PROVIDER_TIMEOUT_MS
+      );
+      const statusPayload = await readResponsePayload(statusResponse);
+      if (!statusResponse.ok) {
+        const errorMessage = extractApiError(statusPayload, "Pixazo status lookup failed.");
+        const error = makeTaggedError(errorMessage, {
+          provider: "pixazo",
+          providerAttempt: `${sanitizeString(credential?.id, 80) || "pixazo"}:${modelName}`,
+          status: statusResponse.status,
+          rateLimited: statusResponse.status === 429,
+          retryable: statusResponse.status >= 500 || statusResponse.status === 429
+        });
+        lastError = error;
+        if (cooldownName) {
+          setProviderCooldown(task, cooldownName, error);
+        }
+        if (shouldRetryPixazoWithAnotherModel(error)) {
+          imageUrl = "";
+          break;
+        }
+        throw error;
+      }
+      imageUrl = resolvePixazoImageUrl(statusPayload);
+      const taskStatus = sanitizeString(statusPayload?.output?.task_status || statusPayload?.task_status || statusPayload?.status, 40).toUpperCase();
+      if (!imageUrl && (taskStatus === "FAILED" || taskStatus === "ERROR" || taskStatus === "CANCELLED")) {
+        const error = makeTaggedError(extractApiError(statusPayload, "Pixazo did not complete the image request."), {
+          provider: "pixazo",
+          providerAttempt: `${sanitizeString(credential?.id, 80) || "pixazo"}:${modelName}`,
+          retryable: true
+        });
+        lastError = error;
+        if (cooldownName) {
+          setProviderCooldown(task, cooldownName, error);
+        }
+        if (shouldRetryPixazoWithAnotherModel(error)) {
+          break;
+        }
+        throw error;
+      }
+    }
+
+    if (!imageUrl) {
+      const error = makeTaggedError("Pixazo did not return an image.", {
+        provider: "pixazo",
+        providerAttempt: `${sanitizeString(credential?.id, 80) || "pixazo"}:${modelName}`,
+        retryable: true
+      });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryPixazoWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    const download = await fetchArrayBufferWithTimeout(imageUrl);
+    if (cooldownName) {
+      clearProviderCooldown(task, cooldownName);
+    }
+    return {
+      caption: "",
+      mimeType: download.mimeType,
+      imageDataUrl: `data:${download.mimeType};base64,${download.bytes.toString("base64")}`
+    };
   }
 
-  if (!imageUrl) {
-    throw makeTaggedError("Pixazo did not return an image.", { provider: "pixazo", retryable: true });
-  }
-
-  const download = await fetchArrayBufferWithTimeout(imageUrl);
-  return {
-    caption: "",
-    mimeType: download.mimeType,
-    imageDataUrl: `data:${download.mimeType};base64,${download.bytes.toString("base64")}`
-  };
+  throw lastError || makeTaggedError("Pixazo image generation failed.", { provider: "pixazo", retryable: true });
 }
 
 async function callXaiProvider(task, payload, credential) {
@@ -2480,6 +2962,103 @@ async function callXaiProvider(task, payload, credential) {
   }
 
   throw lastError || makeTaggedError("xAI image generation failed.", { provider: "xai", retryable: true });
+}
+
+async function callEdenProvider(task, payload, credential) {
+  if (task !== "image") {
+    throw makeTaggedError("This request type is not available in the current image provider.", { provider: "edenai", code: "UNSUPPORTED_TASK" });
+  }
+
+  if (payload.imageData) {
+    throw makeTaggedError("Reference-image editing is not enabled for the Eden AI image flow in this app yet.", {
+      provider: "edenai",
+      code: "UNSUPPORTED_ATTACHMENT"
+    });
+  }
+
+  const apiKey = credentialValue(credential);
+  const prompt = imagePromptWithQualityGuidance(payload);
+  const modelsToTry = edenImageModelsToTry(payload);
+  let lastError = null;
+
+  for (const modelName of modelsToTry) {
+    const cooldownName = edenImageModelCooldownName(credential, modelName);
+    if (cooldownName && isProviderCoolingDown(task, cooldownName)) {
+      continue;
+    }
+
+    const response = await fetchWithTimeout(`${EDENAI_API_BASE}/universal-ai`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: modelName,
+        input: {
+          text: prompt,
+          resolution: imageAspectToEdenResolution(payload.aspectRatio)
+        },
+        show_original_response: true
+      })
+    }, PROVIDER_TIMEOUT_MS + 25000);
+
+    const raw = await readResponsePayload(response);
+    const logicalStatus = response.ok && sanitizeString(raw?.status, 20).toLowerCase() === "fail" ? 422 : response.status;
+    if (!response.ok || logicalStatus === 422) {
+      const errorMessage = extractApiError(raw, "Eden AI image generation failed.");
+      const error = makeTaggedError(errorMessage, {
+        provider: "edenai",
+        providerAttempt: `${sanitizeString(credential?.id, 80) || "edenai"}:${modelName}`,
+        status: logicalStatus,
+        rateLimited: logicalStatus === 429 || String(errorMessage).toLowerCase().includes("rate limit"),
+        retryable: logicalStatus >= 500 || logicalStatus === 408 || logicalStatus === 409 || logicalStatus === 422 || logicalStatus === 425 || logicalStatus === 429
+      });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryEdenWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    const resource = resolveEdenImageResource(raw);
+    if (!resource) {
+      const error = makeTaggedError("Eden AI did not return an image.", {
+        provider: "edenai",
+        providerAttempt: `${sanitizeString(credential?.id, 80) || "edenai"}:${modelName}`,
+        retryable: true
+      });
+      lastError = error;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, error);
+      }
+      if (shouldRetryEdenWithAnotherModel(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    const image = await materializeImageResource(resource);
+    if (cooldownName) {
+      clearProviderCooldown(task, cooldownName);
+    }
+    return {
+      caption: sanitizeString(
+        raw?.output?.caption
+          || raw?.output?.text
+          || raw?.output?.revised_prompt
+          || raw?.original_response?.data?.[0]?.revised_prompt
+          || "",
+        1200
+      ),
+      ...image
+    };
+  }
+
+  throw lastError || makeTaggedError("Eden AI image generation failed.", { provider: "edenai", retryable: true });
 }
 
 async function callPollinationsProvider(task, payload) {
@@ -2618,19 +3197,20 @@ function providerPlanFor(task, payload) {
   if (task === "image") {
     const withImagePayload = (extra = {}) => ({ ...payload, ...extra, qualityMode: "high" });
     const imageEditProviders = [
-      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
       ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
       ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential))
     ];
     if (payload?.imageData) {
       return imageEditProviders;
     }
     return [
-      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
       ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
+      ...createCredentialAttempts("edenai", EDENAI_CREDENTIALS, (credential) => callEdenProvider(task, withImagePayload(), credential)),
+      ...createCredentialAttempts("pixazo", PIXAZO_CREDENTIALS, (credential) => callPixazoProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_HIGH_MODEL }), credential)),
-      ...createCredentialAttempts("pixazo", PIXAZO_CREDENTIALS, (credential) => callPixazoProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("fal", FAL_CREDENTIALS, (credential) => callFalProvider(task, withImagePayload(), credential)),
       { name: "pollinations", enabled: true, fn: () => callPollinationsProvider(task, withImagePayload()) }
     ];
@@ -2829,6 +3409,7 @@ const server = http.createServer(async (req, res) => {
           || RUNWAY_CREDENTIALS.length
           || PIXAZO_CREDENTIALS.length
           || XAI_CREDENTIALS.length
+          || EDENAI_CREDENTIALS.length
         ),
         defaultModel: DEFAULT_MODEL,
         codingModel: CODING_MODEL
