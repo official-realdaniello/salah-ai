@@ -71,11 +71,14 @@ const EDENAI_CREDENTIALS = createCredentialPool("edenai", "EDENAI_API_KEY", "EDE
 const DEFAULT_MODEL = process.env.SALAH_AI_MODEL || "gemini-2.5-flash-lite";
 const CODING_MODEL = process.env.SALAH_AI_CODING_MODEL || DEFAULT_MODEL;
 const IMAGE_MODEL = process.env.SALAH_AI_IMAGE_MODEL || "gemini-2.5-flash-image";
+const DEFAULT_GEMINI_IMAGE_MODEL_FALLBACKS = [
+  "gemini-3.1-flash-image-preview",
+  "gemini-3-pro-image-preview",
+  "gemini-2.5-flash-image"
+];
 const GEMINI_IMAGE_MODEL_FALLBACKS = Array.from(new Set([
-  IMAGE_MODEL,
-  "gemini-2.5-flash-preview-image",
-  "gemini-2.5-flash-image",
-  "gemini-2.0-flash-preview-image-generation"
+  sanitizeModel(IMAGE_MODEL, ""),
+  ...createModelPriorityList(process.env.SALAH_AI_GEMINI_IMAGE_MODELS, DEFAULT_GEMINI_IMAGE_MODEL_FALLBACKS)
 ].filter(Boolean)));
 const DEEPSEEK_MODEL = process.env.SALAH_AI_DEEPSEEK_MODEL || "deepseek-reasoner";
 const DEEPSEEK_CODING_MODEL = process.env.SALAH_AI_DEEPSEEK_CODING_MODEL || DEEPSEEK_MODEL;
@@ -93,6 +96,15 @@ const PIXAZO_IMAGE_MODEL = process.env.SALAH_AI_PIXAZO_IMAGE_MODEL || "gpt-image
 const PIXAZO_HIGGSFIELD_STYLE_ID = process.env.SALAH_AI_PIXAZO_HIGGSFIELD_STYLE_ID || "a5f63c3b-70eb-4979-af5e-98c7ee1e18e8";
 const XAI_IMAGE_MODEL = process.env.SALAH_AI_XAI_IMAGE_MODEL || "grok-imagine-image";
 const XAI_IMAGE_PRO_MODEL = process.env.SALAH_AI_XAI_IMAGE_PRO_MODEL || "grok-imagine-image-pro";
+const DEFAULT_XAI_IMAGE_MODEL_FALLBACKS = [
+  "grok-imagine-image",
+  "grok-imagine-image-pro"
+];
+const XAI_IMAGE_MODEL_FALLBACKS = Array.from(new Set([
+  sanitizeModel(XAI_IMAGE_MODEL, ""),
+  sanitizeModel(XAI_IMAGE_PRO_MODEL, ""),
+  ...createModelPriorityList(process.env.SALAH_AI_XAI_IMAGE_MODELS, DEFAULT_XAI_IMAGE_MODEL_FALLBACKS)
+].filter(Boolean)));
 const POLLINATIONS_IMAGE_MODEL = process.env.SALAH_AI_POLLINATIONS_IMAGE_MODEL || "flux";
 const MAX_BODY_SIZE = 18 * 1024 * 1024;
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -281,6 +293,7 @@ function serializeImageJob(job) {
     attempts: Array.isArray(job.attempts) ? job.attempts.slice(-6).map((attempt) => ({
       provider: sanitizeString(attempt.provider, 40),
       providerLabel: sanitizeString(attempt.providerLabel, 60),
+      providerAttempt: sanitizeString(attempt.providerAttempt, 120),
       status: Number(attempt.status || 0),
       message: sanitizeString(attempt.message, 180),
       at: Number(attempt.at || 0)
@@ -788,6 +801,13 @@ function geminiModelsToTry(task, requestedModel) {
   ].filter(Boolean)));
 }
 
+function geminiImageModelsToTry(payload) {
+  return Array.from(new Set([
+    sanitizeModel(payload?.model, ""),
+    ...GEMINI_IMAGE_MODEL_FALLBACKS
+  ].filter(Boolean)));
+}
+
 function geminiModelCooldownName(credential, modelName) {
   const safeModel = sanitizeModel(modelName, "");
   if (!safeModel) {
@@ -803,17 +823,27 @@ function shouldRetryGeminiWithAnotherModel(error) {
   if (error.code === "UNSUPPORTED_ATTACHMENT" || error.code === "UNSUPPORTED_TASK") {
     return false;
   }
-  if ([401, 402, 403].includes(Number(error.status || 0))) {
+  if ([401, 402].includes(Number(error.status || 0))) {
     return false;
   }
 
   const text = String(error.message || "").toLowerCase();
   if (
     text.includes("api key")
-    || text.includes("permission denied")
-    || text.includes("permission_denied")
     || text.includes("authentication")
     || text.includes("blocked the request")
+  ) {
+    return false;
+  }
+  if (
+    Number(error.status || 0) === 403
+    && (
+      text.includes("permission denied")
+      || text.includes("permission_denied")
+      || text.includes("not authorized")
+      || text.includes("forbidden")
+    )
+    && !text.includes("model")
   ) {
     return false;
   }
@@ -1489,7 +1519,37 @@ async function readResponsePayload(response) {
 }
 
 function extractApiError(payload, fallbackMessage) {
-  return payload?.error?.message || payload?.message || payload?.rawText || fallbackMessage;
+  const nestedError = payload?.error;
+  if (typeof nestedError === "string" && nestedError.trim()) {
+    return nestedError.trim();
+  }
+  if (typeof nestedError?.message === "string" && nestedError.message.trim()) {
+    return nestedError.message.trim();
+  }
+  if (typeof nestedError?.detail === "string" && nestedError.detail.trim()) {
+    return nestedError.detail.trim();
+  }
+  if (typeof payload?.detail === "string" && payload.detail.trim()) {
+    return payload.detail.trim();
+  }
+  if (typeof payload?.message === "string" && payload.message.trim()) {
+    return payload.message.trim();
+  }
+  if (Array.isArray(payload?.errors) && payload.errors.length) {
+    const joined = payload.errors
+      .map((item) => {
+        if (typeof item === "string") {
+          return item.trim();
+        }
+        return sanitizeString(item?.message || item?.detail || "", 200);
+      })
+      .filter(Boolean)
+      .join(" | ");
+    if (joined) {
+      return joined;
+    }
+  }
+  return payload?.rawText || fallbackMessage;
 }
 
 function makeTaggedError(message, options = {}) {
@@ -1983,8 +2043,7 @@ function credentialValue(credential) {
 
 function xaiImageModelsToTry(payload) {
   const requestedModel = sanitizeModel(payload?.model, "");
-  const preferredModels = [XAI_IMAGE_PRO_MODEL, XAI_IMAGE_MODEL];
-  return Array.from(new Set([requestedModel, ...preferredModels].filter(Boolean)));
+  return Array.from(new Set([requestedModel, ...XAI_IMAGE_MODEL_FALLBACKS].filter(Boolean)));
 }
 
 function xaiImageModelCooldownName(credential, modelName) {
@@ -1999,19 +2058,31 @@ function shouldRetryXaiWithAnotherModel(error) {
   if (!error) {
     return false;
   }
-  if (error.code === "UNSUPPORTED_TASK") {
+  if (error.code === "UNSUPPORTED_TASK" || error.code === "UNSUPPORTED_ATTACHMENT") {
     return false;
   }
-  if ([401, 402, 403].includes(Number(error.status || 0))) {
+  if ([401, 402].includes(Number(error.status || 0))) {
     return false;
   }
   const text = String(error.message || "").toLowerCase();
   if (
     text.includes("api key")
     || text.includes("authentication")
-    || text.includes("permission denied")
     || text.includes("moderation")
     || text.includes("filtered")
+  ) {
+    return false;
+  }
+  if (
+    Number(error.status || 0) === 403
+    && (
+      text.includes("permission denied")
+      || text.includes("not authorized")
+      || text.includes("organization")
+      || text.includes("team")
+      || text.includes("account suspended")
+    )
+    && !text.includes("model")
   ) {
     return false;
   }
@@ -2099,11 +2170,14 @@ async function callGeminiProvider(task, payload, credential) {
   const apiKey = credentialValue(credential);
 
   if (task === "image") {
-    const requestedModel = sanitizeString(payload?.model, 120);
-    const modelsToTry = Array.from(new Set([requestedModel, ...GEMINI_IMAGE_MODEL_FALLBACKS].filter(Boolean)));
+    const modelsToTry = geminiImageModelsToTry(payload);
     let lastError = null;
 
     for (const modelName of modelsToTry) {
+      const cooldownName = geminiModelCooldownName(credential, modelName);
+      if (cooldownName && isProviderCoolingDown(task, cooldownName)) {
+        continue;
+      }
       const imagePrompt = buildImagePrompt(payload, modelName);
       const requestBody = {
         contents: imagePrompt.contents,
@@ -2121,17 +2195,21 @@ async function callGeminiProvider(task, payload, credential) {
 
       let imageRaw = await readResponsePayload(imageResponse);
       if (imageResponse.ok) {
-        return collectGeminiImage(imageRaw);
+        const image = collectGeminiImage(imageRaw);
+        if (cooldownName) {
+          clearProviderCooldown(task, cooldownName);
+        }
+        return image;
       }
 
       const errorMessage = extractApiError(imageRaw, "Image generation failed.");
-      const primaryError = makeTaggedError(errorMessage, {
+      let primaryError = makeTaggedError(errorMessage, {
         provider: "gemini",
+        providerAttempt: `${sanitizeString(credential?.id, 80) || "gemini"}:${modelName}`,
         status: imageResponse.status,
         rateLimited: imageResponse.status === 429 || String(errorMessage).toLowerCase().includes("resource exhausted"),
-        retryable: imageResponse.status >= 500 || imageResponse.status === 429
+        retryable: imageResponse.status >= 500 || imageResponse.status === 404 || imageResponse.status === 429
       });
-      lastError = primaryError;
 
       if (imageResponse.status === 400 && requestBody.generationConfig) {
         imageResponse = await fetchWithTimeout(`${GEMINI_API_BASE}/models/${encodeURIComponent(imagePrompt.model)}:generateContent`, {
@@ -2144,16 +2222,30 @@ async function callGeminiProvider(task, payload, credential) {
         });
         imageRaw = await readResponsePayload(imageResponse);
         if (imageResponse.ok) {
-          return collectGeminiImage(imageRaw);
+          const image = collectGeminiImage(imageRaw);
+          if (cooldownName) {
+            clearProviderCooldown(task, cooldownName);
+          }
+          return image;
         }
         const retryMessage = extractApiError(imageRaw, "Image generation failed.");
-        lastError = makeTaggedError(retryMessage, {
+        primaryError = makeTaggedError(retryMessage, {
           provider: "gemini",
+          providerAttempt: `${sanitizeString(credential?.id, 80) || "gemini"}:${modelName}`,
           status: imageResponse.status,
           rateLimited: imageResponse.status === 429 || String(retryMessage).toLowerCase().includes("resource exhausted"),
-          retryable: imageResponse.status >= 500 || imageResponse.status === 429
+          retryable: imageResponse.status >= 500 || imageResponse.status === 404 || imageResponse.status === 429
         });
       }
+
+      lastError = primaryError;
+      if (cooldownName) {
+        setProviderCooldown(task, cooldownName, primaryError);
+      }
+      if (shouldRetryGeminiWithAnotherModel(primaryError)) {
+        continue;
+      }
+      throw primaryError;
     }
 
     throw lastError || makeTaggedError("Image generation failed.", { provider: "gemini", retryable: true });
@@ -2908,12 +3000,18 @@ async function callXaiProvider(task, payload, credential) {
 
     const raw = await readResponsePayload(response);
     if (!response.ok) {
-      const errorMessage = extractApiError(raw, "xAI image generation failed.");
+      const errorMessage = extractApiError(
+        raw,
+        response.status === 403
+          ? `xAI rejected image model ${modelName} with 403 Forbidden. This key likely does not have access to that image model.`
+          : "xAI image generation failed."
+      );
       const error = makeTaggedError(errorMessage, {
         provider: "xai",
+        providerAttempt: `${sanitizeString(credential?.id, 80) || "xai"}:${modelName}`,
         status: response.status,
         rateLimited: response.status === 429 || String(errorMessage).toLowerCase().includes("rate limit"),
-        retryable: response.status >= 500 || response.status === 429
+        retryable: response.status >= 500 || response.status === 404 || response.status === 429
       });
       lastError = error;
       if (cooldownName) {
@@ -2950,7 +3048,11 @@ async function callXaiProvider(task, payload, credential) {
       };
     }
 
-    const error = makeTaggedError("xAI did not return an image.", { provider: "xai", retryable: true });
+    const error = makeTaggedError("xAI did not return an image.", {
+      provider: "xai",
+      providerAttempt: `${sanitizeString(credential?.id, 80) || "xai"}:${modelName}`,
+      retryable: true
+    });
     lastError = error;
     if (cooldownName) {
       setProviderCooldown(task, cooldownName, error);
@@ -3198,7 +3300,7 @@ function providerPlanFor(task, payload) {
     const withImagePayload = (extra = {}) => ({ ...payload, ...extra, qualityMode: "high" });
     const imageEditProviders = [
       ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
-      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
+      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential))
     ];
     if (payload?.imageData) {
@@ -3206,7 +3308,7 @@ function providerPlanFor(task, payload) {
     }
     return [
       ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
-      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload({ model: XAI_IMAGE_PRO_MODEL }), credential)),
+      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("edenai", EDENAI_CREDENTIALS, (credential) => callEdenProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("pixazo", PIXAZO_CREDENTIALS, (credential) => callPixazoProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential)),
@@ -3334,6 +3436,7 @@ function createImageJob(payload) {
           job.attempts.push({
             provider: sanitizeString(attempt.provider, 40),
             providerLabel: sanitizeString(attempt.providerLabel, 60),
+            providerAttempt: sanitizeString(attempt.providerAttempt, 120),
             status: Number(attempt.status || 0),
             message: sanitizeString(attempt.message, 180),
             at: Date.now()
@@ -3358,6 +3461,7 @@ function createImageJob(payload) {
           job.attempts.push({
             provider: sanitizeString(failure?.provider, 40),
             providerLabel: providerDisplayName(failure?.provider),
+            providerAttempt: sanitizeString(failure?.providerAttempt, 120),
             status: Number(failure?.status || 0),
             message: sanitizeString(failure?.message, 180),
             at: Date.now()

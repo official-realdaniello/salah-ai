@@ -2409,7 +2409,12 @@ function renderImagesResult() {
         ${attempts.length ? `
           <p class="muted-line">${escapeHtml(uiWord("Recent provider updates:", "آخر تحديثات المزود:"))}</p>
           <div class="stack-form stack-form--compact">
-            ${attempts.map((attempt) => `<p class="muted-line">${escapeHtml(`${attempt.providerLabel || attempt.provider || "Provider"}${attempt.status ? ` [${attempt.status}]` : ""}: ${attempt.message || ""}`)}</p>`).join("")}
+            ${attempts.map((attempt) => {
+              const attemptLabel = attempt.providerAttempt
+                ? `${attempt.providerLabel || attempt.provider || "Provider"} (${attempt.providerAttempt})`
+                : (attempt.providerLabel || attempt.provider || "Provider");
+              return `<p class="muted-line">${escapeHtml(`${attemptLabel}${attempt.status ? ` [${attempt.status}]` : ""}: ${attempt.message || ""}`)}</p>`;
+            }).join("")}
           </div>
         ` : ""}
       </section>
