@@ -3297,23 +3297,17 @@ function createCredentialAttempts(providerName, credentials, createCall) {
 function providerPlanFor(task, payload) {
   const hasAttachment = Boolean(payload?.fileData);
   if (task === "image") {
-    const withImagePayload = (extra = {}) => ({ ...payload, ...extra, qualityMode: "high" });
-    const imageEditProviders = [
-      ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
-      ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload(), credential)),
-      ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential))
-    ];
-    if (payload?.imageData) {
-      return imageEditProviders;
-    }
+    const withImagePayload = () => ({
+      prompt: sanitizeString(payload?.prompt, 2200),
+      aspectRatio: sanitizeString(payload?.aspectRatio, 10) || "1:1",
+      mode: "generate",
+      qualityMode: "high"
+    });
     return [
       ...createCredentialAttempts("gemini", GEMINI_CREDENTIALS, (credential) => callGeminiProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("xai", XAI_CREDENTIALS, (credential) => callXaiProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("edenai", EDENAI_CREDENTIALS, (credential) => callEdenProvider(task, withImagePayload(), credential)),
       ...createCredentialAttempts("pixazo", PIXAZO_CREDENTIALS, (credential) => callPixazoProvider(task, withImagePayload(), credential)),
-      ...createCredentialAttempts("runway", RUNWAY_CREDENTIALS, (credential) => callRunwayProvider(task, withImagePayload(), credential)),
-      ...createCredentialAttempts("together", TOGETHER_CREDENTIALS, (credential) => callTogetherProvider(task, withImagePayload({ model: TOGETHER_IMAGE_HIGH_MODEL }), credential)),
-      ...createCredentialAttempts("fal", FAL_CREDENTIALS, (credential) => callFalProvider(task, withImagePayload(), credential)),
       { name: "pollinations", enabled: true, fn: () => callPollinationsProvider(task, withImagePayload()) }
     ];
   }
@@ -3542,7 +3536,22 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && requestUrl.pathname === "/api/image-jobs") {
       const body = await readJsonBody(req);
       const payload = body.payload || {};
+      const mode = sanitizeString(payload.mode, 24).toLowerCase() || "generate";
       const prompt = sanitizeString(payload.prompt, 2200);
+      if (mode !== "generate") {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Only image generation is supported."
+        });
+        return;
+      }
+      if (payload.imageData) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Reference-image editing is disabled. Use prompt-only image generation."
+        });
+        return;
+      }
       if (!prompt) {
         sendJson(res, 400, {
           ok: false,
@@ -3562,7 +3571,11 @@ const server = http.createServer(async (req, res) => {
         });
         return;
       }
-      const job = createImageJob(payload);
+      const job = createImageJob({
+        mode: "generate",
+        prompt,
+        aspectRatio: sanitizeString(payload.aspectRatio, 10) || "1:1"
+      });
       sendJson(res, 202, {
         ok: true,
         job: serializeImageJob(job)

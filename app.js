@@ -314,12 +314,8 @@ const defaultState = {
   },
   images: {
     result: null,
-    editRequest: "",
     lastInput: {
-      mode: "generate",
       prompt: "",
-      fileName: "",
-      imageData: "",
       aspectRatio: "1:1"
     }
   },
@@ -335,6 +331,7 @@ const runtime = {
   typing: { tutor: null, coding: null, notes: null, planner: null },
   files: { tutor: null, coding: null, notes: null, quiz: null, images: null },
   imagesProgress: null,
+  imagesRequestToken: "",
   notifications: [],
   panel: "",
   confirm: null,
@@ -456,6 +453,47 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function slugifyFileName(value, fallback = "generated-image") {
+  const cleaned = String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return cleaned || fallback;
+}
+
+function fileExtensionForMimeType(mimeType) {
+  switch (String(mimeType || "").toLowerCase()) {
+    case "image/jpeg":
+      return "jpg";
+    case "image/webp":
+      return "webp";
+    case "image/gif":
+      return "gif";
+    case "image/svg+xml":
+      return "svg";
+    default:
+      return "png";
+  }
+}
+
+function imageDownloadFileName(result, fallbackPrompt = "") {
+  const prompt = String(result?.prompt || fallbackPrompt || "").trim();
+  const base = slugifyFileName(prompt, "generated-image");
+  const extension = fileExtensionForMimeType(result?.mimeType);
+  return `${base}.${extension}`;
+}
+
+function downloadDataUrl(dataUrl, fileName) {
+  const anchor = document.createElement("a");
+  anchor.href = String(dataUrl || "");
+  anchor.download = fileName || "generated-image.png";
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 function makeNotification(message, kind = "info") {
@@ -2429,6 +2467,11 @@ function renderImagesResult() {
     <section class="content-block">
       <img class="image-preview" src="${state.images.result.imageDataUrl}" alt="Generated image">
     </section>
+    <section class="content-block">
+      <div class="form-row">
+        <button class="button button--soft" id="imagesDownload" type="button">${escapeHtml(uiWord("Download", "تنزيل"))}</button>
+      </div>
+    </section>
     ${state.images.result.providerLabel ? `
       <section class="content-block">
         <p class="muted-line">${escapeHtml(uiWord(`Generated with ${state.images.result.providerLabel}.`, `تم الإنشاء باستخدام ${state.images.result.providerLabel}.`))}</p>
@@ -3662,6 +3705,8 @@ function deletePlannerPlan(planId) {
 
 async function runImageRequest(payload, persistInput = true) {
   const submitButton = document.getElementById("imagesSubmit");
+  const requestToken = makeId("image-request");
+  runtime.imagesRequestToken = requestToken;
   if (persistInput) {
     state.images.lastInput = { ...state.images.lastInput, ...payload };
   }
@@ -3672,7 +3717,7 @@ async function runImageRequest(payload, persistInput = true) {
   runtime.imagesProgress = {
     status: "queued",
     currentProvider: "",
-    currentProviderLabel: "xAI",
+    currentProviderLabel: uiWord("AI provider", "مزود الذكاء"),
     attempts: []
   };
   renderApp();
@@ -3680,19 +3725,37 @@ async function runImageRequest(payload, persistInput = true) {
 
   try {
     const job = await createImageJob(payload);
+    if (runtime.imagesRequestToken !== requestToken) {
+      return;
+    }
     runtime.imagesProgress = job;
     renderApp();
     const completedJob = await waitForImageJob(job.id);
-    state.images.result = completedJob.result || null;
+    if (runtime.imagesRequestToken !== requestToken) {
+      return;
+    }
+    state.images.result = completedJob.result
+      ? {
+          ...completedJob.result,
+          prompt: payload.prompt,
+          aspectRatio: payload.aspectRatio,
+          generatedAt: Date.now()
+        }
+      : null;
     persist();
     renderApp();
   } catch (error) {
-    alertError(error);
+    if (runtime.imagesRequestToken === requestToken) {
+      alertError(error);
+    }
   } finally {
-    runtime.busy.images = false;
-    runtime.imagesProgress = null;
-    renderApp();
-    setBusy(submitButton, false);
+    if (runtime.imagesRequestToken === requestToken) {
+      runtime.imagesRequestToken = "";
+      runtime.busy.images = false;
+      runtime.imagesProgress = null;
+      renderApp();
+      setBusy(submitButton, false);
+    }
   }
 }
 
@@ -4051,17 +4114,39 @@ function bindPlannerEvents() {
 function bindImagesEvents() {
   document.getElementById("imagesForm")?.addEventListener("submit", handleImagesForm);
   document.getElementById("imagesPrompt")?.addEventListener("input", (event) => {
-    state.images.lastInput.prompt = event.target.value;
+    const nextPrompt = String(event.target.value || "");
+    state.images.lastInput.prompt = nextPrompt;
+    if (!runtime.busy.images && state.images.result && nextPrompt.trim() !== String(state.images.result.prompt || "").trim()) {
+      state.images.result = null;
+      runtime.imagesProgress = null;
+      renderApp();
+    }
     persist();
   });
   document.getElementById("imagesAspectRatio")?.addEventListener("change", (event) => {
-    state.images.lastInput.aspectRatio = event.target.value;
+    const nextAspectRatio = String(event.target.value || "1:1");
+    state.images.lastInput.aspectRatio = nextAspectRatio;
+    if (!runtime.busy.images && state.images.result && nextAspectRatio !== String(state.images.result.aspectRatio || "")) {
+      state.images.result = null;
+      runtime.imagesProgress = null;
+      renderApp();
+    }
     persist();
+  });
+  document.getElementById("imagesDownload")?.addEventListener("click", () => {
+    if (!state.images.result?.imageDataUrl) {
+      return;
+    }
+    downloadDataUrl(
+      state.images.result.imageDataUrl,
+      imageDownloadFileName(state.images.result, state.images.lastInput.prompt)
+    );
   });
   document.getElementById("imagesClear")?.addEventListener("click", () => {
     state.images = deepClone(defaultState.images);
     runtime.files.images = null;
     runtime.imagesProgress = null;
+    runtime.imagesRequestToken = "";
     persist();
     renderApp();
   });
