@@ -858,6 +858,22 @@ function renderIeeePreview(documentModel) {
   `;
 }
 
+function renderIeeeSampleNotice() {
+  if (!runtime.sampleNotices?.ieee) {
+    return "";
+  }
+  return `
+    <section class="sample-notice sample-notice--danger" role="alert" aria-live="polite">
+      <strong>${escapeHtml(uiWord("Important notice", "تنبيه مهم"))}</strong>
+      <p>${escapeHtml(uiWord(
+        "The sample/example IEEE paper details are completely fake and only for demonstration. They do not belong to any real person, institution, paper, dataset, or project.",
+        "بيانات نموذج ورقة IEEE تجريبية ووهمية بالكامل ومخصصة للعرض فقط. لا تعود إلى أي شخص أو مؤسسة أو ورقة أو مجموعة بيانات أو مشروع حقيقي."
+      ))}</p>
+      <button class="button button--soft button--danger" id="ieeeSampleNoticeDismiss" type="button">${escapeHtml(uiWord("Okay", "حسنًا"))}</button>
+    </section>
+  `;
+}
+
 function renderIeeePage() {
   const currentVersion = state.ieee.form.version === "anonymous" ? "anonymous" : "full";
   const currentDocument = state.ieee.generated?.[currentVersion] || null;
@@ -886,6 +902,7 @@ function renderIeeePage() {
         </form>
       </article>
       <aside class="surface editor-panel ieee-preview-panel">
+        ${renderIeeeSampleNotice()}
         ${renderIeeePreview(currentDocument)}
       </aside>
     </section>
@@ -1131,6 +1148,9 @@ function bindIeeeEvents() {
   document.getElementById("ieeeDownloadFull")?.addEventListener("click", () => handleIeeeDownload("full"));
   document.getElementById("ieeeDownloadAnonymous")?.addEventListener("click", () => handleIeeeDownload("anonymous"));
   document.getElementById("ieeeDownloadBoth")?.addEventListener("click", () => handleIeeeDownload("both"));
+  document.getElementById("ieeeSampleNoticeDismiss")?.addEventListener("click", () => {
+    dismissSampleNotice("ieee");
+  });
   const previewScroll = document.getElementById("ieeePreviewScroll");
   ["mousedown", "mouseenter", "touchstart"].forEach((eventName) => {
     previewScroll?.addEventListener(eventName, (event) => {

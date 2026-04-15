@@ -899,6 +899,22 @@ function renderCvPreview() {
   `;
 }
 
+function renderCvSampleNotice() {
+  if (!runtime.sampleNotices?.cv) {
+    return "";
+  }
+  return `
+    <section class="sample-notice sample-notice--danger" role="alert" aria-live="polite">
+      <strong>${escapeHtml(uiWord("Important notice", "تنبيه مهم"))}</strong>
+      <p>${escapeHtml(uiWord(
+        "The sample/example CV details are completely fake and only for demonstration. They do not belong to any real person, company, institution, or account.",
+        "بيانات نموذج السيرة الذاتية تجريبية ووهمية بالكامل ومخصصة للعرض فقط. لا تعود إلى أي شخص أو شركة أو مؤسسة أو حساب حقيقي."
+      ))}</p>
+      <button class="button button--soft button--danger" id="cvSampleNoticeDismiss" type="button">${escapeHtml(uiWord("Okay", "حسنًا"))}</button>
+    </section>
+  `;
+}
+
 function renderCvPage() {
   const personal = state.cv.form.personal;
   const skills = state.cv.form.skills;
@@ -987,6 +1003,7 @@ function renderCvPage() {
       </article>
 
       <aside class="surface output-panel cv-preview-panel">
+        ${renderCvSampleNotice()}
         ${renderCvPreview()}
       </aside>
     </section>
@@ -1225,6 +1242,10 @@ function bindCvEvents() {
     state.cv = createCvState();
     persist();
     renderApp({ transition: true });
+  });
+
+  document.getElementById("cvSampleNoticeDismiss")?.addEventListener("click", () => {
+    dismissSampleNotice("cv");
   });
 
   document.getElementById("cvDownload")?.addEventListener("click", handleCvDownload);

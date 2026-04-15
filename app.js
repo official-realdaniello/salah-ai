@@ -349,6 +349,10 @@ const runtime = {
   busy: { tutor: false, coding: false, notes: false, quiz: false, planner: false, images: false, cv: false, ieee: false },
   typing: { tutor: null, coding: null, notes: null, planner: null },
   files: { tutor: null, coding: null, notes: null, quiz: null, images: null },
+  sampleNotices: {
+    cv: page === "cv",
+    ieee: page === "ieee"
+  },
   imagesProgress: null,
   imagesRequestToken: "",
   notifications: [],
@@ -1607,6 +1611,14 @@ function renderNotifications() {
 
 function uiWord(en, ar) {
   return state.ui.lang === "ar" ? ar : en;
+}
+
+function dismissSampleNotice(key) {
+  if (!key || !runtime.sampleNotices || !runtime.sampleNotices[key]) {
+    return;
+  }
+  runtime.sampleNotices[key] = false;
+  renderApp();
 }
 
 function inferReplyLanguage(text, fallback = state.ui.lang === "ar" ? "ar" : "en") {
