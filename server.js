@@ -647,20 +647,41 @@ function renderIeeePdfHtml(documentModel) {
 </html>`;
 }
 
+function existingFilePath(candidate) {
+  const value = sanitizeString(candidate, 600);
+  return value && fs.existsSync(value) ? value : "";
+}
+
 function resolvePdfBrowserPath() {
-  const candidates = [
-    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+  const installRoots = Array.from(new Set([
+    process.env.LOCALAPPDATA,
+    process.env.ProgramFiles,
+    process.env["ProgramFiles(x86)"]
+  ].map((value) => sanitizeString(value, 260)).filter(Boolean)));
+
+  const relativeCandidates = [
+    "Microsoft\\Edge\\Application\\msedge.exe",
+    "Microsoft\\Edge Beta\\Application\\msedge.exe",
+    "Google\\Chrome\\Application\\chrome.exe",
+    "Google\\Chrome SxS\\Application\\chrome.exe",
+    "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+    "BraveSoftware\\Brave-Browser-Beta\\Application\\brave.exe",
+    "Chromium\\Application\\chrome.exe",
+    "Vivaldi\\Application\\vivaldi.exe"
   ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) || "";
+
+  const candidates = Array.from(new Set([
+    sanitizeString(process.env.SALAH_AI_PDF_BROWSER_PATH, 600),
+    ...installRoots.flatMap((rootPath) => relativeCandidates.map((relativePath) => path.join(rootPath, relativePath)))
+  ]));
+
+  return candidates.map(existingFilePath).find(Boolean) || "";
 }
 
 async function renderPdfFromHtml(html, preferredFileName = "resume.pdf") {
   const browserPath = resolvePdfBrowserPath();
   if (!browserPath) {
-    const error = new Error("PDF export needs Microsoft Edge or Google Chrome installed on this machine.");
+    const error = new Error("PDF export needs a Chromium-based browser installed on this machine, such as Brave, Google Chrome, or Microsoft Edge.");
     error.statusCode = 503;
     throw error;
   }
@@ -1401,6 +1422,37 @@ function textPart(text, limit = 32000) {
   return { text: sanitizeString(text, limit) };
 }
 
+function normalizeConversationHistory(messages, options = {}) {
+  const maxMessages = Math.max(1, Number(options.maxMessages) || 12);
+  const maxChars = Math.max(1000, Number(options.maxChars) || 24000);
+  const perMessageLimit = Math.max(500, Number(options.perMessageLimit) || 4000);
+  const normalized = Array.isArray(messages)
+    ? messages.map((message) => ({
+        role: message?.role === "assistant" ? "assistant" : "user",
+        content: sanitizeString(message?.content, perMessageLimit)
+      })).filter((message) => message.content)
+    : [];
+
+  const selected = [];
+  let totalChars = 0;
+
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    const message = normalized[index];
+    if (!message?.content || selected.length >= maxMessages) {
+      continue;
+    }
+
+    if (selected.length > 0 && totalChars + message.content.length > maxChars) {
+      break;
+    }
+
+    selected.unshift(message);
+    totalChars += message.content.length;
+  }
+
+  return selected;
+}
+
 function buildPrompt(task, payload) {
   const language = sanitizeString(payload.language || "bilingual", 24).toLowerCase();
   const responseLanguage = language === "ar" ? "Arabic" : language === "en" ? "English" : "Arabic first with English terms when useful";
@@ -1420,7 +1472,11 @@ function buildPrompt(task, payload) {
             fileData: sanitizeString(payload.fileData, MAX_BODY_SIZE * 2)
           }
         : null;
-      const rawHistory = Array.isArray(payload.messages) ? payload.messages.slice(-10) : [];
+      const rawHistory = normalizeConversationHistory(payload.messages, {
+        maxMessages: 40,
+        maxChars: attachment ? 18000 : 24000,
+        perMessageLimit: 4000
+      });
       const latestMessage = rawHistory[rawHistory.length - 1];
       const hasCurrentQuestionInHistory = latestMessage
         && latestMessage.role !== "assistant"
@@ -1440,7 +1496,7 @@ function buildPrompt(task, payload) {
 
       return {
         model: sanitizeModel(payload.model, DEFAULT_MODEL),
-        systemInstruction: `You are Salah's AI Tutor for Palestinian students. Answer clearly, accurately, and kindly. Use plain natural prose without labels like "Key points" or "Examples" unless the student explicitly asks for them. Keep the answer focused on the student's actual question. Do not invent facts. If information is uncertain, say so briefly. Never provide hacking, cheating, or abusive guidance. Output in ${responseLanguage}.`,
+        systemInstruction: `You are Salah's AI Tutor for Palestinian students. Answer clearly, accurately, and kindly. Use plain natural prose without labels like "Key points" or "Examples" unless the student explicitly asks for them. Keep the answer focused on the student's actual question. Treat earlier messages in this same chat as active memory, and keep track of facts, preferences, and constraints the student already gave unless they correct them. Do not invent facts. If information is uncertain, say so briefly. Never provide hacking, cheating, or abusive guidance. Output in ${responseLanguage}.`,
         contents,
         attachment
       };
@@ -1452,7 +1508,11 @@ function buildPrompt(task, payload) {
       const code = sanitizeString(payload.code, 18000);
       const extra = sanitizeString(payload.extra, 2000);
       const currentRequest = `Mode: ${mode}\nProgramming language: ${languageName}\nGoal:\n${goal}\n\nCurrent code:\n${code || "(none)"}\n\nAdditional context or error:\n${extra || "(none)"}`;
-      const rawHistory = Array.isArray(payload.messages) ? payload.messages.slice(-8) : [];
+      const rawHistory = normalizeConversationHistory(payload.messages, {
+        maxMessages: 32,
+        maxChars: 24000,
+        perMessageLimit: 4000
+      });
       const latestMessage = rawHistory[rawHistory.length - 1];
       const hasCurrentRequestInHistory = latestMessage
         && latestMessage.role !== "assistant"
@@ -1471,7 +1531,7 @@ function buildPrompt(task, payload) {
 
       return {
         model: sanitizeModel(payload.model, CODING_MODEL),
-        systemInstruction: `You are Salah's AI Coding Assistant. Produce clean, production-quality, secure code. Refuse any request that enables hacking, credential theft, spoofing, malware, or abuse. Prefer robust validation, safe defaults, readable structure, and brief explanations. Reply in ${responseLanguage}. If code is returned, make it complete and professional, not pseudo-code.`,
+        systemInstruction: `You are Salah's AI Coding Assistant. Produce clean, production-quality, secure code. Treat earlier messages in this same coding session as active memory, and preserve the user's requirements, architecture choices, and constraints unless they explicitly change them. Refuse any request that enables hacking, credential theft, spoofing, malware, or abuse. Prefer robust validation, safe defaults, readable structure, and brief explanations. Reply in ${responseLanguage}. If code is returned, make it complete and professional, not pseudo-code.`,
         contents
       };
     }

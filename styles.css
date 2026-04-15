@@ -723,16 +723,29 @@ html[data-theme="light"] .surface {
 
 .insights-hero {
   gap: 1rem;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .insights-hero--empty {
   margin-bottom: 1rem;
+  display: none;
 }
 
 .insights-kpis {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.85rem;
+}
+
+.insights-hero > .eyebrow,
+.insights-hero > .page-title,
+.insights-hero > .page-subtitle,
+.cv-hero {
+  display: none;
 }
 
 .insights-layout {
@@ -1084,6 +1097,12 @@ html[data-theme="light"] .surface {
   gap: 0.7rem;
 }
 
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .message-body p,
 .mini-card p,
 .block-item p,
@@ -1174,6 +1193,18 @@ html[data-theme="light"] .stream-frame {
 .composer-code,
 .editor-area {
   background: rgba(255, 255, 255, 0.026);
+}
+
+.composer-input,
+.composer-code {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.composer-input::-webkit-scrollbar,
+.composer-code::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .composer-input {
@@ -1273,6 +1304,11 @@ html[data-theme="light"] .stream-frame {
   color: var(--accent-strong);
   background: rgba(140, 167, 196, 0.1);
   border: 1px solid rgba(140, 167, 196, 0.24);
+}
+
+.file-chip--message {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .micro-button {

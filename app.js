@@ -5,6 +5,9 @@ const LEGACY_STORAGE_KEYS = ["salah-ai-platform-v5", "salah-ai-platform-v4"];
 const PROFILE_STORE_KEY = "salah-ai-profiles-v1";
 const ACTIVE_PROFILE_KEY = "salah-ai-active-profile-v1";
 const PROFILE_STORAGE_PREFIX = "salah-ai-profile-v1:";
+const CHAT_STORAGE_MESSAGE_LIMIT = 120;
+const TUTOR_REQUEST_HISTORY_LIMIT = 40;
+const CODING_REQUEST_HISTORY_LIMIT = 32;
 const pageAliases = { exam: "quiz", flashcards: "home", progress: "insights" };
 const page = pageAliases[document.body.dataset.page] || document.body.dataset.page || "home";
 
@@ -672,6 +675,46 @@ function normalizeTitle(value, fallback) {
   return clean ? clean.slice(0, 48) : fallback;
 }
 
+function normalizeConversationMessages(messages, limit = CHAT_STORAGE_MESSAGE_LIMIT) {
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+  return messages
+    .slice(-limit)
+    .map((message) => ({
+      role: message?.role === "assistant" ? "assistant" : "user",
+      content: String(message?.content || ""),
+      requestContent: String(message?.requestContent || message?.content || ""),
+      attachmentName: String(message?.attachmentName || "")
+    }))
+    .filter((message) => message.content.trim() || message.requestContent.trim() || message.attachmentName);
+}
+
+function createConversationMessage(role, content, options = {}) {
+  return {
+    role: role === "assistant" ? "assistant" : "user",
+    content: String(content || ""),
+    requestContent: String(options.requestContent || content || ""),
+    attachmentName: String(options.attachmentName || "")
+  };
+}
+
+function conversationMessageForAI(message) {
+  const requestContent = String(message?.requestContent || message?.content || "");
+  const attachmentName = String(message?.attachmentName || "");
+  if (!attachmentName || requestContent.includes(attachmentName)) {
+    return requestContent;
+  }
+  return [requestContent, `[Attached file: ${attachmentName}]`].filter(Boolean).join("\n\n");
+}
+
+function buildRequestHistory(messages, limit) {
+  return normalizeConversationMessages(messages, limit).map((message) => ({
+    role: message.role,
+    content: conversationMessageForAI(message)
+  }));
+}
+
 function createTutorTopic(title = "") {
   return {
     id: makeId("topic"),
@@ -1080,12 +1123,7 @@ function migrateTutorTopics(parsed) {
       topics: parsed.tutor.topics.map((topic) => ({
         id: topic.id || makeId("topic"),
         title: normalizeTitle(topic.title, read("tutor.untitled")),
-        messages: Array.isArray(topic.messages)
-          ? topic.messages.slice(-18).map((message) => ({
-              role: message.role === "assistant" ? "assistant" : "user",
-              content: String(message.content || "")
-            }))
-          : [],
+        messages: normalizeConversationMessages(topic.messages),
         updatedAt: Number(topic.updatedAt) || Date.now()
       })),
       activeTopicId: parsed.tutor.activeTopicId || parsed.tutor.topics[0]?.id || ""
@@ -1094,10 +1132,7 @@ function migrateTutorTopics(parsed) {
 
   if (Array.isArray(parsed?.chats?.tutor) && parsed.chats.tutor.length) {
     const topic = createTutorTopic(parsed.chats.tutor.find((item) => item.role === "user")?.content || "");
-    topic.messages = parsed.chats.tutor.slice(-18).map((message) => ({
-      role: message.role === "assistant" ? "assistant" : "user",
-      content: String(message.content || "")
-    }));
+    topic.messages = normalizeConversationMessages(parsed.chats.tutor);
     return { topics: [topic], activeTopicId: topic.id };
   }
 
@@ -1110,12 +1145,7 @@ function migrateCodingSessions(parsed) {
       sessions: parsed.coding.sessions.map((session) => ({
         id: session.id || makeId("session"),
         title: normalizeTitle(session.title, read("coding.untitled")),
-        messages: Array.isArray(session.messages)
-          ? session.messages.slice(-18).map((message) => ({
-              role: message.role === "assistant" ? "assistant" : "user",
-              content: String(message.content || "")
-            }))
-          : [],
+        messages: normalizeConversationMessages(session.messages),
         lastCode: String(session.lastCode || ""),
         lastLanguage: String(session.lastLanguage || parsed.coding?.lastInput?.codeLanguage || "JavaScript"),
         updatedAt: Number(session.updatedAt) || Date.now()
@@ -1503,6 +1533,20 @@ function renderRichText(text) {
 }
 
 function renderMessage(role, content, options = {}) {
+  const message = role && typeof role === "object"
+    ? {
+        role: role.role === "assistant" ? "assistant" : "user",
+        content: String(role.content || ""),
+        attachmentName: String(role.attachmentName || "")
+      }
+    : {
+        role: role === "assistant" ? "assistant" : "user",
+        content: String(content || ""),
+        attachmentName: String(options.attachmentName || "")
+      };
+  role = message.role;
+  content = message.content;
+  options = { ...options, attachmentName: message.attachmentName };
   const label = options.label || (role === "assistant" ? read("brand") : (state.ui.lang === "ar" ? "أنت" : "You"));
   const roleClass = role === "assistant" ? "message--assistant" : "message--user";
 
@@ -1518,7 +1562,10 @@ function renderMessage(role, content, options = {}) {
   return `
     <article class="message ${roleClass}">
       <span class="message-role">${escapeHtml(label)}</span>
-      <div class="message-body">${renderRichText(content)}</div>
+      <div class="message-body">
+        ${options.attachmentName ? `<div class="message-attachments"><span class="file-chip file-chip--message">${escapeHtml(options.attachmentName)}</span></div>` : ""}
+        ${content ? renderRichText(content) : ""}
+      </div>
     </article>
   `;
 }
@@ -1984,7 +2031,7 @@ function renderTutorMessages() {
     return renderInlineEmpty(read("emptyTutor"));
   }
 
-  const parts = messages.map((message) => renderMessage(message.role, message.content));
+  const parts = messages.map((message) => renderMessage(message));
   if (stream) {
     parts.push(renderMessage("assistant", "", {
       streaming: true,
@@ -2072,7 +2119,7 @@ function renderCodingMessages() {
     return renderInlineEmpty(read("emptyCoding"));
   }
 
-  const parts = messages.map((message) => renderMessage(message.role, message.content));
+  const parts = messages.map((message) => renderMessage(message));
   if (stream) {
     parts.push(renderMessage("assistant", "", {
       streaming: true,
@@ -2094,6 +2141,19 @@ function renderCodingModeButtons() {
       `).join("")}
     </div>
   `;
+}
+
+function codingPromptPlaceholder(mode) {
+  switch (mode) {
+    case "edit":
+      return uiWord("Describe what you want to be edited...", "اشرح ما الذي تريد تعديله...");
+    case "debug":
+      return uiWord("Describe the bug or what you want debugged...", "اشرح المشكلة أو ما الذي تريد تصحيحه...");
+    case "review":
+      return uiWord("Describe what you want reviewed...", "اشرح ما الذي تريد مراجعته...");
+    default:
+      return uiWord("Describe what you want to be built...", "اشرح ما الذي تريد بناءه...");
+  }
 }
 
 function renderCodingComposer() {
@@ -3238,6 +3298,14 @@ function syncCodingDraft() {
   persist();
 }
 
+function syncCodingPromptPlaceholder() {
+  const prompt = document.getElementById("codingPrompt");
+  if (!prompt) {
+    return;
+  }
+  prompt.placeholder = codingPromptPlaceholder(state.coding.composer.mode);
+}
+
 function inferCodingLanguage({ fileName = "", code = "", prompt = "", session = null }) {
   const lowerFile = String(fileName || "").toLowerCase();
   const extensionMap = {
@@ -3298,20 +3366,25 @@ async function handleTutorForm(event) {
 
   let userContent = question || (state.ui.lang === "ar" ? "ملف مرفق" : "Attached file");
   let attachment = null;
+  let requestContent = userContent;
+  const attachmentName = file?.name || "";
 
   if (file && !file.name.toLowerCase().endsWith(".pdf")) {
     const text = await file.text();
-    userContent = [userContent, `Attached file (${file.name}):\n${text}`].filter(Boolean).join("\n\n");
+    requestContent = [userContent, `Attached file (${file.name}):\n${text}`].filter(Boolean).join("\n\n");
   } else if (file) {
     attachment = { fileName: file.name, fileData: await fileToDataUrl(file) };
-    userContent = [userContent, `[File: ${file.name}]`].filter(Boolean).join("\n\n");
+    requestContent = [userContent, `[File: ${file.name}]`].filter(Boolean).join("\n\n");
   }
 
   const topic = ensureTutorTopic(question);
   if (!topic.messages.length) {
     topic.title = normalizeTitle(question, read("tutor.untitled"));
   }
-  topic.messages.push({ role: "user", content: userContent });
+  topic.messages.push(createConversationMessage("user", userContent, {
+    requestContent,
+    attachmentName
+  }));
   topic.updatedAt = Date.now();
   state.tutor.activeTopicId = topic.id;
   state.tutor.draftText = "";
@@ -3326,12 +3399,12 @@ async function handleTutorForm(event) {
   let stopThinking = () => {};
   try {
     stopThinking = startThinkingStream("tutor", topic.id);
-    const subject = detectSubject(topic.messages.map((message) => message.content).join("\n"));
+    const subject = detectSubject(topic.messages.map((message) => conversationMessageForAI(message)).join("\n"));
     const result = await requestAI("tutor", {
       subject,
-      language: inferReplyLanguage(question || userContent),
-      question: userContent,
-      messages: topic.messages.slice(-10),
+      language: inferReplyLanguage(question || requestContent),
+      question: requestContent,
+      messages: buildRequestHistory(topic.messages, TUTOR_REQUEST_HISTORY_LIMIT),
       ...(attachment || {})
     });
 
@@ -3373,7 +3446,10 @@ async function runCodingRequest(payload) {
     session.title = normalizeTitle(payload.displayPrompt || payload.goal, read("coding.untitled"));
   }
 
-  session.messages.push({ role: "user", content: payload.displayPrompt || payload.goal });
+  session.messages.push(createConversationMessage("user", payload.displayPrompt || payload.goal, {
+    requestContent: payload.requestContent || payload.displayPrompt || payload.goal,
+    attachmentName: payload.attachmentName || ""
+  }));
   session.updatedAt = Date.now();
   state.coding.activeSessionId = session.id;
   state.coding.composer.prompt = "";
@@ -3398,7 +3474,7 @@ async function runCodingRequest(payload) {
       goal: payload.goal,
       code: payload.code,
       extra: payload.extra,
-      messages: session.messages.slice(-8)
+      messages: buildRequestHistory(session.messages, CODING_REQUEST_HISTORY_LIMIT)
     });
 
     const formatted = formatCodingResultText(result, payload.codeLanguage);
@@ -3476,6 +3552,8 @@ async function handleCodingForm(event) {
     codeLanguage,
     language: inferReplyLanguage(prompt),
     displayPrompt: prompt,
+    requestContent: file?.name ? `${prompt}\n\n[Attached file: ${file.name}]` : prompt,
+    attachmentName: file?.name || "",
     goal: prompt,
     code: mode === "write" ? "" : (code.trim() || session?.lastCode || ""),
     extra
@@ -4004,6 +4082,7 @@ function bindCodingEvents() {
   document.getElementById("codingPrompt")?.addEventListener("input", syncCodingDraft);
   document.getElementById("codingCode")?.addEventListener("input", syncCodingDraft);
   bindComposerSubmitOnEnter("codingPrompt", "codingForm");
+  syncCodingPromptPlaceholder();
   document.getElementById("codingNewSession")?.addEventListener("click", () => {
     pruneEmptyCodingSessions("");
     const session = createCodingSession();

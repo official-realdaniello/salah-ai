@@ -1216,10 +1216,9 @@ function bindCvEvents() {
 
   document.getElementById("cvLoadSample")?.addEventListener("click", () => {
     state.cv.form = createCvSampleForm();
-    state.cv.generated = null;
     state.cv.validation = {};
     persist();
-    renderApp({ transition: true });
+    generateCvFromForm({ focus: true });
   });
 
   document.getElementById("cvClear")?.addEventListener("click", () => {
