@@ -2282,6 +2282,11 @@ function renderNotesResult() {
 function renderStoredTabs(items, activeId, options) {
   const ordered = sortByUpdated(items);
   return `
+    <div class="rail-head">
+      <h2 class="panel-title">${escapeHtml(options.label)}</h2>
+      <button class="icon-button icon-button--plus" id="${options.newButtonId}" type="button" aria-label="${escapeHtml(options.newLabel)}">+</button>
+    </div>
+    <div class="rail-divider"></div>
     <div class="planner-plan-strip planner-plan-strip--compact" role="tablist" aria-label="${escapeHtml(options.label)}">
       ${ordered.map((item) => `
         <div class="planner-plan-card ${item.id === activeId ? "is-active" : ""}">
@@ -2292,7 +2297,6 @@ function renderStoredTabs(items, activeId, options) {
           <button class="planner-plan-delete" ${options.deleteAttr}="${item.id}" type="button" aria-label="${escapeHtml(options.deleteLabel)}">&times;</button>
         </div>
       `).join("")}
-      <button class="icon-button icon-button--plus" id="${options.newButtonId}" type="button" aria-label="${escapeHtml(options.newLabel)}">+</button>
     </div>
   `;
 }
@@ -2481,6 +2485,11 @@ function plannerPlanMeta(plan) {
 function renderPlannerTabs() {
   const plans = sortByUpdated(state.planner.plans);
   return `
+    <div class="rail-head">
+      <h2 class="panel-title">${escapeHtml(uiWord("Plans", "الخطط"))}</h2>
+      <button class="icon-button icon-button--plus" id="plannerNewPlan" type="button" aria-label="${escapeHtml(uiWord("New plan", "خطة جديدة"))}">+</button>
+    </div>
+    <div class="rail-divider"></div>
     <div class="planner-plan-strip" role="tablist" aria-label="${escapeHtml(uiWord("Plans", "الخطط"))}">
       ${plans.map((plan) => `
         <div class="planner-plan-card ${plan.id === state.planner.activePlanId ? "is-active" : ""}">
@@ -2491,7 +2500,6 @@ function renderPlannerTabs() {
           <button class="planner-plan-delete" data-delete-plan="${plan.id}" type="button" aria-label="${escapeHtml(uiWord("Delete plan", "حذف الخطة"))}">&times;</button>
         </div>
       `).join("")}
-      <button class="icon-button icon-button--plus" id="plannerNewPlan" type="button" aria-label="${escapeHtml(uiWord("New plan", "خطة جديدة"))}">+</button>
     </div>
   `;
 }
