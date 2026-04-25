@@ -1019,14 +1019,23 @@ async function downloadIeeePdf(documentModel) {
   }
 
   const blob = await response.blob();
+  triggerFileDownload(blob, documentModel.fileName || "ieee-paper.pdf");
+}
+
+function triggerFileDownload(blob, fileName) {
   const downloadUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  anchor.href = downloadUrl;
-  anchor.download = documentModel.fileName || "ieee-paper.pdf";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(downloadUrl);
+  if (typeof anchor.download === "string") {
+    anchor.href = downloadUrl;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    return;
+  }
+  window.open(downloadUrl, "_blank", "noopener");
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000);
 }
 
 async function handleIeeeDownload(mode) {

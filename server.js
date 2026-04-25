@@ -822,6 +822,23 @@ function existingFilePath(candidate) {
   return value && fs.existsSync(value) ? value : "";
 }
 
+function resolvePdfRendererMode() {
+  const value = sanitizeString(process.env.SALAH_AI_PDF_RENDERER, 20).toLowerCase();
+  if (value === "prince" || value === "browser") {
+    return value;
+  }
+  return "auto";
+}
+
+function isRenderRuntime() {
+  return Boolean(
+    sanitizeString(process.env.RENDER, 20)
+    || sanitizeString(process.env.RENDER_SERVICE_ID, 120)
+    || sanitizeString(process.env.RENDER_EXTERNAL_URL, 600)
+    || sanitizeString(process.env.RENDER_EXTERNAL_HOSTNAME, 200)
+  );
+}
+
 async function resolveExecutableCandidates(command, args = []) {
   try {
     const { stdout } = await execFileAsync(command, args, {
@@ -835,6 +852,55 @@ async function resolveExecutableCandidates(command, args = []) {
   } catch {
     return [];
   }
+}
+
+async function resolvePrincePath() {
+  const explicitPath = existingFilePath(process.env.SALAH_AI_PDF_PRINCE_PATH);
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  const installRoots = Array.from(new Set([
+    process.env.ProgramFiles,
+    process.env["ProgramFiles(x86)"],
+    process.env.ProgramW6432
+  ].map((value) => sanitizeString(value, 260)).filter(Boolean)));
+
+  const windowsCandidates = installRoots.flatMap((rootPath) => [
+    path.join(rootPath, "Prince", "Engine", "bin", "prince.exe"),
+    path.join(rootPath, "Prince", "Engine", "bin", "prince-xml.exe")
+  ]);
+  const macCandidates = [
+    "/usr/local/bin/prince",
+    "/opt/homebrew/bin/prince",
+    "/Applications/Prince.app/Contents/MacOS/prince"
+  ];
+  const linuxCandidates = [
+    "/usr/bin/prince",
+    "/usr/local/bin/prince"
+  ];
+
+  const fixedCandidate = Array.from(new Set([
+    ...windowsCandidates,
+    ...macCandidates,
+    ...linuxCandidates
+  ]))
+    .map(existingFilePath)
+    .find(Boolean);
+  if (fixedCandidate) {
+    return fixedCandidate;
+  }
+
+  const commandCandidates = process.platform === "win32"
+    ? [
+        ...await resolveExecutableCandidates("where.exe", ["prince.exe"]),
+        ...await resolveExecutableCandidates("where.exe", ["prince"])
+      ]
+    : [
+        ...await resolveExecutableCandidates("which", ["prince"])
+      ];
+
+  return commandCandidates.find(Boolean) || "";
 }
 
 async function resolvePdfBrowserPath() {
@@ -913,44 +979,86 @@ async function resolvePdfBrowserPath() {
   return commandCandidates.find(Boolean) || "";
 }
 
-async function renderPdfFromHtml(html, preferredFileName = "resume.pdf") {
-  const browserPath = await resolvePdfBrowserPath();
-  if (!browserPath) {
-    const error = new Error(
-      "PDF export could not start a server-side renderer. Install Chrome, Edge, Brave, Chromium, or Vivaldi, or configure SALAH_AI_PDF_BROWSER_PATH to a Chromium-based browser executable."
-    );
-    error.statusCode = 503;
-    throw error;
-  }
+async function renderPdfWithPrince(princePath, htmlPath, pdfPath) {
+  await execFileAsync(princePath, [htmlPath, "-o", pdfPath], {
+    windowsHide: true,
+    timeout: 60000
+  });
+}
 
+async function renderPdfWithBrowser(browserPath, htmlPath, pdfPath) {
+  const fileUrl = pathToFileURL(htmlPath).toString();
+  const baseArgs = [
+    "--disable-gpu",
+    "--run-all-compositor-stages-before-draw",
+    "--disable-print-preview",
+    "--no-pdf-header-footer",
+    `--print-to-pdf=${pdfPath}`,
+    fileUrl
+  ];
+  try {
+    await execFileAsync(browserPath, ["--headless=new", ...baseArgs], { windowsHide: true, timeout: 60000 });
+  } catch (newHeadlessError) {
+    try {
+      await execFileAsync(browserPath, ["--headless", ...baseArgs], { windowsHide: true, timeout: 60000 });
+    } catch (legacyHeadlessError) {
+      throw new Error(`${newHeadlessError.message}; fallback failed: ${legacyHeadlessError.message}`);
+    }
+  }
+}
+
+async function renderPdfFromHtml(html, preferredFileName = "resume.pdf") {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "salah-cv-"));
   const htmlPath = path.join(tempDir, "resume.html");
   const pdfPath = path.join(tempDir, preferredFileName);
   fs.writeFileSync(htmlPath, html, "utf8");
 
   try {
-    const fileUrl = pathToFileURL(htmlPath).toString();
-    const baseArgs = [
-      "--disable-gpu",
-      "--run-all-compositor-stages-before-draw",
-      "--disable-print-preview",
-      "--no-pdf-header-footer",
-      `--print-to-pdf=${pdfPath}`,
-      fileUrl
-    ];
-    try {
-      await execFileAsync(browserPath, ["--headless=new", ...baseArgs], { windowsHide: true, timeout: 60000 });
-    } catch (newHeadlessError) {
+    const errors = [];
+    const mode = resolvePdfRendererMode();
+    const rendererOrder = mode === "prince"
+      ? ["prince", "browser"]
+      : mode === "browser"
+        ? ["browser", "prince"]
+        : (isRenderRuntime() ? ["prince", "browser"] : ["browser", "prince"]);
+
+    for (const renderer of rendererOrder) {
       try {
-        await execFileAsync(browserPath, ["--headless", ...baseArgs], { windowsHide: true, timeout: 60000 });
-      } catch (legacyHeadlessError) {
-        const executableMessage = `${newHeadlessError.message}; fallback failed: ${legacyHeadlessError.message}`;
-        const error = new Error(`PDF export failed with the configured browser executable: ${executableMessage}`);
-        error.statusCode = 503;
-        throw error;
+        if (fs.existsSync(pdfPath)) {
+          fs.rmSync(pdfPath, { force: true });
+        }
+
+        if (renderer === "prince") {
+          const princePath = await resolvePrincePath();
+          if (!princePath) {
+            errors.push("Prince renderer was not found");
+            continue;
+          }
+          await renderPdfWithPrince(princePath, htmlPath, pdfPath);
+        } else {
+          const browserPath = await resolvePdfBrowserPath();
+          if (!browserPath) {
+            errors.push("Chromium browser renderer was not found");
+            continue;
+          }
+          await renderPdfWithBrowser(browserPath, htmlPath, pdfPath);
+        }
+
+        if (!fs.existsSync(pdfPath)) {
+          errors.push(`${renderer} renderer finished without creating a PDF file`);
+          continue;
+        }
+
+        return fs.readFileSync(pdfPath);
+      } catch (error) {
+        errors.push(`${renderer} renderer failed: ${error.message}`);
       }
     }
-    return fs.readFileSync(pdfPath);
+
+    const guidance = "Install PrinceXML or install Chrome/Edge/Brave/Chromium/Vivaldi, or configure SALAH_AI_PDF_PRINCE_PATH / SALAH_AI_PDF_BROWSER_PATH.";
+    const error = new Error(`PDF export failed. ${errors.join(" | ")}. ${guidance}`);
+    error.statusCode = 503;
+    throw error;
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
