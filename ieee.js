@@ -1029,30 +1029,6 @@ async function downloadIeeePdf(documentModel) {
   URL.revokeObjectURL(downloadUrl);
 }
 
-async function fetchIeeePrintableHtml(documentModel) {
-  const response = await fetch("/api/ieee-print", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      document: documentModel,
-      fileName: documentModel.fileName
-    })
-  });
-
-  if (!response.ok) {
-    let errorMessage = "IEEE paper print export failed.";
-    try {
-      const payload = await response.json();
-      errorMessage = payload.error || errorMessage;
-    } catch {
-      errorMessage = await response.text() || errorMessage;
-    }
-    throw new Error(errorMessage);
-  }
-
-  return response.text();
-}
-
 async function handleIeeeDownload(mode) {
   const documents = state.ieee.generated?.full || state.ieee.generated?.anonymous
     ? state.ieee.generated
@@ -1071,51 +1047,19 @@ async function handleIeeeDownload(mode) {
   renderApp();
   try {
     if (mode === "full" && full) {
-      try {
-        await downloadIeeePdf(full);
-      } catch (error) {
-        if (!shouldUseBrowserPrintFallback(error)) {
-          throw error;
-        }
-        const html = await fetchIeeePrintableHtml(full);
-        await openBrowserPrintFallback(html);
-      }
+      await downloadIeeePdf(full);
       return;
     }
     if (mode === "anonymous" && anonymous) {
-      try {
-        await downloadIeeePdf(anonymous);
-      } catch (error) {
-        if (!shouldUseBrowserPrintFallback(error)) {
-          throw error;
-        }
-        const html = await fetchIeeePrintableHtml(anonymous);
-        await openBrowserPrintFallback(html);
-      }
+      await downloadIeeePdf(anonymous);
       return;
     }
     if (full) {
-      try {
-        await downloadIeeePdf(full);
-      } catch (error) {
-        if (!shouldUseBrowserPrintFallback(error)) {
-          throw error;
-        }
-        const html = await fetchIeeePrintableHtml(full);
-        await openBrowserPrintFallback(html);
-      }
+      await downloadIeeePdf(full);
     }
     if (anonymous) {
       await new Promise((resolve) => setTimeout(resolve, 180));
-      try {
-        await downloadIeeePdf(anonymous);
-      } catch (error) {
-        if (!shouldUseBrowserPrintFallback(error)) {
-          throw error;
-        }
-        const html = await fetchIeeePrintableHtml(anonymous);
-        await openBrowserPrintFallback(html);
-      }
+      await downloadIeeePdf(anonymous);
     }
   } catch (error) {
     alertError(error);
