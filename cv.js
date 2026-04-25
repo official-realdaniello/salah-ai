@@ -881,7 +881,7 @@ function renderCvPreview() {
         <p class="section-label">${escapeHtml(uiWord("Generated CV", "السيرة الذاتية المُنشأة"))}</p>
         <h2 class="panel-title" id="cvPreviewTitle" tabindex="-1">${escapeHtml(uiWord("Preview", "المعاينة"))}</h2>
       </div>
-      <button class="button button--primary" id="cvDownload" type="button" ${runtime.busy.cv ? "disabled" : ""}>${escapeHtml(runtime.busy.cv ? uiWord("Preparing print view...", "جارٍ تجهيز صفحة الطباعة...") : uiWord("Print / Save PDF", "طباعة / حفظ PDF"))}</button>
+      <button class="button button--primary" id="cvDownload" type="button" ${runtime.busy.cv ? "disabled" : ""}>${escapeHtml(runtime.busy.cv ? uiWord("Downloading...", "جارٍ التنزيل...") : uiWord("Download", "تنزيل"))}</button>
     </div>
     <div class="cv-preview-box">
       <div class="cv-preview-scroll" id="cvPreviewScroll" role="region" tabindex="0" aria-label="${escapeHtml(uiWord("CV preview area", "معاينة السيرة الذاتية"))}">

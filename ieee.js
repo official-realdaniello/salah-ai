@@ -802,9 +802,9 @@ function renderIeeePreview(documentModel) {
         <h2 class="panel-title" id="ieeePreviewTitle" tabindex="-1">${escapeHtml(documentModel.versionLabel)}</h2>
       </div>
       <div class="ieee-preview-actions">
-        <button class="button button--soft" id="ieeeDownloadFull" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(uiWord("Print Full / Save PDF", "طباعة الكامل / حفظ PDF"))}</button>
-        <button class="button button--soft" id="ieeeDownloadAnonymous" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(uiWord("Print Anonymous / Save PDF", "طباعة المجهول / حفظ PDF"))}</button>
-        <button class="button button--primary" id="ieeeDownloadBoth" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(runtime.busy.ieee ? uiWord("Preparing print views...", "جارٍ تجهيز صفحات الطباعة...") : uiWord("Print Both / Save PDFs", "طباعة النسختين / حفظ PDF"))}</button>
+        <button class="button button--soft" id="ieeeDownloadFull" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(uiWord("Download Full", "تنزيل الكامل"))}</button>
+        <button class="button button--soft" id="ieeeDownloadAnonymous" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(uiWord("Download Anonymous", "تنزيل المجهول"))}</button>
+        <button class="button button--primary" id="ieeeDownloadBoth" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(runtime.busy.ieee ? uiWord("Downloading...", "جارٍ التنزيل...") : uiWord("Download Both", "تنزيل النسختين"))}</button>
       </div>
     </div>
     ${renderIeeePreviewWarningPanel()}
