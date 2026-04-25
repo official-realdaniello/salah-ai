@@ -881,7 +881,7 @@ function renderIeeePage() {
     <section class="hero glass cv-hero">
       <p class="eyebrow">${escapeHtml(uiWord("IEEE Paper Generator", "مولد ورقة IEEE"))}</p>
       <h1 class="page-title">${escapeHtml(uiWord("Prepare a clean, blind-review-ready IEEE-style paper.", "أنشئ ورقة بأسلوب IEEE بشكل نظيف وجاهز للمراجعة العمياء."))}</h1>
-      <p class="page-subtitle">${escapeHtml(uiWord("Fill only what you need, preview the paper in a formal two-column layout, then open the browser print dialog to save the full version, anonymous version, or both as PDF.", "املأ فقط ما تحتاجه، ثم عاين الورقة بتنسيق ثنائي الأعمدة وافتح نافذة الطباعة لحفظ النسخة الكاملة أو المجهولة أو كلتيهما كملف PDF."))}</p>
+      <p class="page-subtitle">${escapeHtml(uiWord("Fill only what you need, preview the paper in a formal two-column layout, then download the full version, anonymous version, or both as PDFs.", "املأ فقط ما تحتاجه، ثم عاين الورقة بتنسيق ثنائي الأعمدة ونزّل النسخة الكاملة أو المجهولة أو كلتيهما كملفات PDF."))}</p>
     </section>
     <section class="ieee-layout">
       <article class="surface editor-panel ieee-form-panel">

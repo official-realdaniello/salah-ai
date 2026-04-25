@@ -923,7 +923,7 @@ function renderCvPage() {
     <section class="hero glass cv-hero">
       <p class="eyebrow">${escapeHtml(uiWord("CV Creator", "منشئ السيرة الذاتية"))}</p>
       <h1 class="page-title">${escapeHtml(uiWord("Build a cleaner, ATS-friendly CV.", "أنشئ سيرة ذاتية أنظف ومتوافقة مع أنظمة التوظيف."))}</h1>
-      <p class="page-subtitle">${escapeHtml(uiWord("Every field is optional. Empty fields stay out of the final CV. Generate the preview, then open the browser print dialog and save it as PDF.", "كل الحقول اختيارية. الحقول الفارغة لا تظهر في السيرة النهائية. أنشئ المعاينة ثم افتح نافذة الطباعة واحفظها كملف PDF."))}</p>
+      <p class="page-subtitle">${escapeHtml(uiWord("Every field is optional. Empty fields stay out of the final CV. Generate the preview, then download the PDF directly.", "كل الحقول اختيارية. الحقول الفارغة لا تظهر في السيرة النهائية. أنشئ المعاينة ثم نزّل ملف PDF مباشرة."))}</p>
     </section>
     <section class="cv-layout">
       <article class="surface editor-panel cv-form-panel">
