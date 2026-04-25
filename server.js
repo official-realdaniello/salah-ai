@@ -172,13 +172,11 @@ const PUBLIC_ASSET_FILES = new Set([
   "planner.html",
   "exam.html",
   "progress.html",
-  "print-shell.html",
   "styles.css",
   "bootstrap.js",
   "cv.js",
   "ieee.js",
   "app.js",
-  "print-shell.js",
   "favicon.svg",
   "palestine.svg",
   "us.svg"
@@ -918,7 +916,9 @@ async function resolvePdfBrowserPath() {
 async function renderPdfFromHtml(html, preferredFileName = "resume.pdf") {
   const browserPath = await resolvePdfBrowserPath();
   if (!browserPath) {
-    const error = new Error("PDF export needs a Chromium-based browser installed on this machine, such as Brave, Google Chrome, or Microsoft Edge.");
+    const error = new Error(
+      "PDF export could not start a server-side renderer. Install Chrome, Edge, Brave, Chromium, or Vivaldi, or configure SALAH_AI_PDF_BROWSER_PATH to a Chromium-based browser executable."
+    );
     error.statusCode = 503;
     throw error;
   }
@@ -940,8 +940,15 @@ async function renderPdfFromHtml(html, preferredFileName = "resume.pdf") {
     ];
     try {
       await execFileAsync(browserPath, ["--headless=new", ...baseArgs], { windowsHide: true, timeout: 60000 });
-    } catch {
-      await execFileAsync(browserPath, ["--headless", ...baseArgs], { windowsHide: true, timeout: 60000 });
+    } catch (newHeadlessError) {
+      try {
+        await execFileAsync(browserPath, ["--headless", ...baseArgs], { windowsHide: true, timeout: 60000 });
+      } catch (legacyHeadlessError) {
+        const executableMessage = `${newHeadlessError.message}; fallback failed: ${legacyHeadlessError.message}`;
+        const error = new Error(`PDF export failed with the configured browser executable: ${executableMessage}`);
+        error.statusCode = 503;
+        throw error;
+      }
     }
     return fs.readFileSync(pdfPath);
   } finally {
@@ -960,15 +967,6 @@ function sendPdf(res, fileName, pdfBuffer) {
     "Content-Length": pdfBuffer.length
   });
   res.end(pdfBuffer);
-}
-
-function sendHtml(res, statusCode, payload) {
-  res.writeHead(statusCode, {
-    "Content-Type": "text/html; charset=utf-8",
-    "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff"
-  });
-  res.end(payload);
 }
 
 function sanitizeModel(value, fallback) {
@@ -4263,23 +4261,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/cv-print") {
-      assertTrustedBrowserOrigin(req);
-      assertJsonRequest(req);
-      enforceRateLimit(req, "cv-print", { limit: 20, windowMs: 5 * 60 * 1000 });
-      const body = await readJsonBody(req);
-      const documentModel = sanitizeCvDocument(body.document);
-      if (!documentModel.name && !documentModel.professionalTitle && !documentModel.contactLines.length && !documentModel.linkLines.length && !documentModel.sections.length) {
-        sendJson(res, 400, {
-          ok: false,
-          error: "Add some information to generate your CV."
-        });
-        return;
-      }
-      sendHtml(res, 200, renderCvPdfHtml(documentModel));
-      return;
-    }
-
     if (req.method === "POST" && requestUrl.pathname === "/api/ieee-pdf") {
       assertTrustedBrowserOrigin(req);
       assertJsonRequest(req);
@@ -4297,23 +4278,6 @@ const server = http.createServer(async (req, res) => {
       const html = renderIeeePdfHtml(documentModel);
       const pdfBuffer = await renderPdfFromHtml(html, documentModel.fileName || "ieee-paper.pdf");
       sendPdf(res, documentModel.fileName || "ieee-paper.pdf", pdfBuffer);
-      return;
-    }
-
-    if (req.method === "POST" && requestUrl.pathname === "/api/ieee-print") {
-      assertTrustedBrowserOrigin(req);
-      assertJsonRequest(req);
-      enforceRateLimit(req, "ieee-print", { limit: 20, windowMs: 5 * 60 * 1000 });
-      const body = await readJsonBody(req);
-      const documentModel = sanitizeIeeeDocument(body.document);
-      if (!documentModel.hasContent) {
-        sendJson(res, 400, {
-          ok: false,
-          error: "Add your paper details to generate an IEEE-style preview."
-        });
-        return;
-      }
-      sendHtml(res, 200, renderIeeePdfHtml(documentModel));
       return;
     }
 
