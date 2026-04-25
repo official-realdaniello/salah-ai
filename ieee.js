@@ -59,7 +59,7 @@ function createIeeeSampleForm() {
     keywords: "bilingual interface, educational AI, learning analytics, local storage, PDF export",
     introduction: "Students often move between many websites during one study session. They may ask a tutor question, write code, clean notes, build an exam, plan the week, and later prepare a CV or paper. This creates extra steps and broken context. Salah's AI was built to solve this problem for Palestinian students who need Arabic and English support in one simple system. The main contribution of this project is not one tool only. It is a full study workflow: tutor, coding, notes, exams, planner, insights, images, CV, and IEEE paper generation inside one local web platform with one navigation style and export support.",
     relatedWork: "Many AI tools only do one job. Chat assistants answer questions but do not store study progress in a structured way. Note tools summarize text but do not create exams or study plans. CV builders and paper tools are usually separate from daily learning tools. Salah's AI is different because it connects learning, assessment, planning, and formal document creation in one website. It also gives Arabic and English support, local browser storage, and anonymous paper export for student research work.",
-    methodology: "The website uses separate pages for each main task. Tutor keeps topic-based chats. Coding keeps session-based work with write, edit, debug, and review modes. Notes can analyze typed text or uploaded files. Exams can be created from text or PDF and can be graded inside the same page. Planner builds multi-day plans with start date, end date, and hours per day. Insights uses stored exam attempts to show mastery, active subjects, weak areas, and recent activity. Images creates study visuals. CV Creator and IEEE Paper Generator build structured documents and export them as PDF. The system saves local data in the browser, supports profile switching, and uses AI provider routing with fallback logic. The IEEE generator also scans for self-identifying text in anonymous mode.",
+    methodology: "The website uses separate pages for each main task. Tutor keeps topic-based chats. Coding keeps session-based work with write, edit, debug, and review modes. Notes can analyze typed text or uploaded files. Exams can be created from text or PDF and can be graded inside the same page. Planner builds multi-day plans with start date, end date, and hours per day. Insights uses stored exam attempts to show mastery, active subjects, weak areas, and recent activity. Images creates study visuals. CV Creator and IEEE Paper Generator build structured documents and export them as PDF. The system saves local data in the browser with one automatic device-based workspace and uses AI provider routing with fallback logic. The IEEE generator also scans for self-identifying text in anonymous mode.",
     experiments: "We tested the project as a working web prototype on a local Windows setup with a Node.js server and a browser client. We used Arabic and English study text, sample PDF files, coding prompts, and document forms as input data. We checked whether each tool could finish its main task from start to end. The main checks were page flow, saved local state, bilingual output, exam grading and insight updates, planner generation across a date range, image generation, CV PDF export, and IEEE full and anonymous PDF export. We also checked whether anonymous mode removed author details and acknowledgments and whether it showed warnings when the paper body used self-identifying phrases.",
     results: "The prototype completed the main student workflow inside one website. Tutor and coding kept separate histories. Notes produced structured summaries. Exams could be generated and graded, and these results were sent to the insights dashboard. Planner created date-based plans, and document generators exported readable PDFs. The IEEE generator produced both full and anonymous versions from the same form, removed identifying author data in anonymous mode, and warned about risky phrases inside the body text. These results show that the platform is already useful as a real student tool and not only as a concept.",
     conclusion: "Salah's AI shows that one simple website can support tutoring, planning, assessment, and formal writing for Palestinian students. The strongest value of the project is the joined workflow and the bilingual, student-friendly design. A clear next step is broader user testing with students, stronger evaluation metrics, and richer reference and citation support for academic writing.",
@@ -1029,6 +1029,30 @@ async function downloadIeeePdf(documentModel) {
   URL.revokeObjectURL(downloadUrl);
 }
 
+async function fetchIeeePrintableHtml(documentModel) {
+  const response = await fetch("/api/ieee-print", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      document: documentModel,
+      fileName: documentModel.fileName
+    })
+  });
+
+  if (!response.ok) {
+    let errorMessage = "IEEE paper print export failed.";
+    try {
+      const payload = await response.json();
+      errorMessage = payload.error || errorMessage;
+    } catch {
+      errorMessage = await response.text() || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.text();
+}
+
 async function handleIeeeDownload(mode) {
   const documents = state.ieee.generated?.full || state.ieee.generated?.anonymous
     ? state.ieee.generated
@@ -1047,19 +1071,51 @@ async function handleIeeeDownload(mode) {
   renderApp();
   try {
     if (mode === "full" && full) {
-      await downloadIeeePdf(full);
+      try {
+        await downloadIeeePdf(full);
+      } catch (error) {
+        if (!shouldUseBrowserPrintFallback(error)) {
+          throw error;
+        }
+        const html = await fetchIeeePrintableHtml(full);
+        await openBrowserPrintFallback(html);
+      }
       return;
     }
     if (mode === "anonymous" && anonymous) {
-      await downloadIeeePdf(anonymous);
+      try {
+        await downloadIeeePdf(anonymous);
+      } catch (error) {
+        if (!shouldUseBrowserPrintFallback(error)) {
+          throw error;
+        }
+        const html = await fetchIeeePrintableHtml(anonymous);
+        await openBrowserPrintFallback(html);
+      }
       return;
     }
     if (full) {
-      await downloadIeeePdf(full);
+      try {
+        await downloadIeeePdf(full);
+      } catch (error) {
+        if (!shouldUseBrowserPrintFallback(error)) {
+          throw error;
+        }
+        const html = await fetchIeeePrintableHtml(full);
+        await openBrowserPrintFallback(html);
+      }
     }
     if (anonymous) {
       await new Promise((resolve) => setTimeout(resolve, 180));
-      await downloadIeeePdf(anonymous);
+      try {
+        await downloadIeeePdf(anonymous);
+      } catch (error) {
+        if (!shouldUseBrowserPrintFallback(error)) {
+          throw error;
+        }
+        const html = await fetchIeeePrintableHtml(anonymous);
+        await openBrowserPrintFallback(html);
+      }
     }
   } catch (error) {
     alertError(error);

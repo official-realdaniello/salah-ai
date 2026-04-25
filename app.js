@@ -2,12 +2,21 @@ window.__SALAH_APP_READY__ = true;
 
 const STORAGE_KEY = "salah-ai-platform-v6";
 const LEGACY_STORAGE_KEYS = ["salah-ai-platform-v5", "salah-ai-platform-v4"];
-const PROFILE_STORE_KEY = "salah-ai-profiles-v1";
-const ACTIVE_PROFILE_KEY = "salah-ai-active-profile-v1";
-const PROFILE_STORAGE_PREFIX = "salah-ai-profile-v1:";
+const LEGACY_PROFILE_STORE_KEY = "salah-ai-profiles-v1";
+const LEGACY_ACTIVE_PROFILE_KEY = "salah-ai-active-profile-v1";
+const LEGACY_PROFILE_STORAGE_PREFIX = "salah-ai-profile-v1:";
+const DEVICE_PROFILE_ID_KEY = "salah-ai-device-profile-id-v1";
+const DEVICE_PROFILE_STORAGE_PREFIX = "salah-ai-device-profile-v1:";
 const CHAT_STORAGE_MESSAGE_LIMIT = 120;
 const TUTOR_REQUEST_HISTORY_LIMIT = 40;
 const CODING_REQUEST_HISTORY_LIMIT = 32;
+const MAX_TEXT_UPLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_PDF_UPLOAD_BYTES = 8 * 1024 * 1024;
+const TEXT_UPLOAD_EXTENSIONS = new Set([
+  ".txt", ".md", ".json", ".csv", ".js", ".jsx", ".ts", ".tsx", ".py", ".java",
+  ".c", ".cpp", ".cs", ".go", ".rs", ".php", ".rb", ".html", ".css", ".sql",
+  ".xml", ".yml", ".yaml"
+]);
 const pageAliases = { exam: "quiz", flashcards: "home", progress: "insights" };
 const page = pageAliases[document.body.dataset.page] || document.body.dataset.page || "home";
 
@@ -277,6 +286,31 @@ homeText.ar.cards.push({ key: "cv", title: "\u0635\u0627\u0646\u0639 \u0627\u064
 homeText.en.cards.push({ key: "ieee", title: "IEEE Paper Generator", text: "Draft a conference-style paper, switch between full and anonymous versions, and export clean PDFs." });
 homeText.ar.cards.push({ key: "ieee", title: "\u0645\u0648\u0644\u062f \u0648\u0631\u0642\u0629 IEEE", text: "\u0623\u0646\u0634\u0626 \u0648\u0631\u0642\u0629 \u0628\u0623\u0633\u0644\u0648\u0628 IEEE \u0645\u0639 \u0645\u0639\u0627\u064a\u0646\u0629 \u0644\u0644\u0646\u0633\u062e\u0629 \u0627\u0644\u0643\u0627\u0645\u0644\u0629 \u0648\u0627\u0644\u0645\u062c\u0647\u0648\u0644\u0629 \u0648\u062a\u0635\u062f\u064a\u0631 PDF." });
 
+function createCvStateSafe() {
+  return typeof window.createCvState === "function"
+    ? window.createCvState()
+    : { form: null, generated: null, validation: {} };
+}
+
+function createIeeeStateSafe() {
+  return typeof window.createIeeeState === "function"
+    ? window.createIeeeState()
+    : {
+        form: null,
+        generated: { full: null, anonymous: null },
+        warnings: {},
+        validation: {}
+      };
+}
+
+function migrateCvStateSafe(payload) {
+  return typeof window.migrateCvState === "function" ? window.migrateCvState(payload) : createCvStateSafe();
+}
+
+function migrateIeeeStateSafe(payload) {
+  return typeof window.migrateIeeeState === "function" ? window.migrateIeeeState(payload) : createIeeeStateSafe();
+}
+
 const defaultState = {
   ui: {
     theme: "dark",
@@ -338,8 +372,8 @@ const defaultState = {
       aspectRatio: "1:1"
     }
   },
-  cv: createCvState(),
-  ieee: createIeeeState(),
+  cv: createCvStateSafe(),
+  ieee: createIeeeStateSafe(),
   analytics: {
     events: []
   }
@@ -387,22 +421,21 @@ function makeId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function sanitizeProfileName(value, fallback = "My Study Space") {
-  const clean = String(value || "").replace(/\s+/g, " ").trim();
-  return clean ? clean.slice(0, 28) : fallback;
+function createDeviceStorageKey(deviceId) {
+  return `${DEVICE_PROFILE_STORAGE_PREFIX}${deviceId}`;
 }
 
-function createLocalProfile(name = "", index = 1) {
-  return {
-    id: makeId("profile"),
-    name: sanitizeProfileName(name, index > 1 ? `Study Space ${index}` : "My Study Space"),
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
+function ensureDeviceProfileId() {
+  let deviceId = String(localStorage.getItem(DEVICE_PROFILE_ID_KEY) || "").trim();
+  if (!deviceId) {
+    deviceId = `device-${makeId("profile")}`;
+    localStorage.setItem(DEVICE_PROFILE_ID_KEY, deviceId);
+  }
+  return deviceId;
 }
 
-function profileStorageKey(profileId) {
-  return `${PROFILE_STORAGE_PREFIX}${profileId}`;
+function legacyProfileStorageKey(profileId) {
+  return `${LEGACY_PROFILE_STORAGE_PREFIX}${profileId}`;
 }
 
 function readStorageJson(key) {
@@ -420,53 +453,30 @@ function readStorageJson(key) {
   }
 }
 
-function loadProfileStore() {
-  const parsed = readStorageJson(PROFILE_STORE_KEY);
-  const parsedProfiles = Array.isArray(parsed?.profiles)
-    ? parsed.profiles
-      .filter((profile) => profile && typeof profile === "object")
-      .map((profile, index) => ({
-        id: String(profile.id || makeId("profile")),
-        name: sanitizeProfileName(profile.name, index > 0 ? `Study Space ${index + 1}` : "My Study Space"),
-        createdAt: Number(profile.createdAt) || Date.now(),
-        updatedAt: Number(profile.updatedAt) || Date.now()
-      }))
-    : [];
-  const profiles = parsedProfiles.length ? parsedProfiles : [createLocalProfile()];
-  let activeId = localStorage.getItem(ACTIVE_PROFILE_KEY) || parsed?.activeId || profiles[0].id;
-  if (!profiles.some((profile) => profile.id === activeId)) {
-    activeId = profiles[0].id;
-  }
-  return { profiles, activeId };
-}
-
-let profileStore = loadProfileStore();
-persistProfileStore();
-
-function persistProfileStore() {
-  localStorage.setItem(PROFILE_STORE_KEY, JSON.stringify(profileStore));
-  localStorage.setItem(ACTIVE_PROFILE_KEY, profileStore.activeId);
-}
-
-function activeProfile() {
-  return profileStore.profiles.find((profile) => profile.id === profileStore.activeId) || profileStore.profiles[0];
-}
-
 function currentStorageKey() {
-  return profileStorageKey(activeProfile()?.id || "default");
+  return createDeviceStorageKey(ensureDeviceProfileId());
 }
 
 function shouldUseLegacyStorageFallback() {
-  return profileStore.profiles.length === 1 && !readStorageJson(currentStorageKey());
+  return !readStorageJson(currentStorageKey());
 }
 
-function touchActiveProfile() {
-  const profile = activeProfile();
-  if (!profile) {
-    return;
+function legacyProfileStorageKeys() {
+  const profileStore = readStorageJson(LEGACY_PROFILE_STORE_KEY);
+  const profileIds = [];
+  const activeId = String(localStorage.getItem(LEGACY_ACTIVE_PROFILE_KEY) || profileStore?.activeId || "").trim();
+  if (activeId) {
+    profileIds.push(activeId);
   }
-  profile.updatedAt = Date.now();
-  persistProfileStore();
+  if (Array.isArray(profileStore?.profiles)) {
+    profileStore.profiles.forEach((profile) => {
+      const profileId = String(profile?.id || "").trim();
+      if (profileId) {
+        profileIds.push(profileId);
+      }
+    });
+  }
+  return Array.from(new Set(profileIds)).map(legacyProfileStorageKey);
 }
 
 function escapeHtml(value) {
@@ -485,6 +495,49 @@ function slugifyFileName(value, fallback = "generated-image") {
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
   return cleaned || fallback;
+}
+
+function fileExtension(value) {
+  const match = String(value || "").toLowerCase().match(/\.[a-z0-9]+$/);
+  return match ? match[0] : "";
+}
+
+function validateSelectedFile(file, options = {}) {
+  if (!file) {
+    return null;
+  }
+
+  const allowPdf = Boolean(options.allowPdf);
+  const allowText = Boolean(options.allowText);
+  const extension = fileExtension(file.name);
+  const mimeType = String(file.type || "").toLowerCase();
+  const isPdf = extension === ".pdf" || mimeType === "application/pdf";
+  const isTextLike = mimeType.startsWith("text/")
+    || mimeType === "application/json"
+    || mimeType === "application/xml"
+    || TEXT_UPLOAD_EXTENSIONS.has(extension);
+
+  if (isPdf) {
+    if (!allowPdf) {
+      throw new Error(uiWord("PDF files are not supported here.", "ملفات PDF غير مدعومة هنا."));
+    }
+    if (file.size > MAX_PDF_UPLOAD_BYTES) {
+      throw new Error(uiWord("PDF files must be 8 MB or smaller.", "يجب أن يكون حجم ملف PDF أقل من 8 ميغابايت."));
+    }
+    return file;
+  }
+
+  if (isTextLike) {
+    if (!allowText) {
+      throw new Error(uiWord("This uploader only accepts PDF files.", "هذا الحقل يقبل ملفات PDF فقط."));
+    }
+    if (file.size > MAX_TEXT_UPLOAD_BYTES) {
+      throw new Error(uiWord("Text files must be 2 MB or smaller.", "يجب أن يكون حجم الملفات النصية أقل من 2 ميغابايت."));
+    }
+    return file;
+  }
+
+  throw new Error(uiWord("Unsupported file type.", "نوع الملف غير مدعوم."));
 }
 
 function fileExtensionForMimeType(mimeType) {
@@ -517,6 +570,85 @@ function downloadDataUrl(dataUrl, fileName) {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
+}
+
+function shouldUseBrowserPrintFallback(error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /pdf export needs a chromium-based browser installed/i.test(message)
+    || /\bspawn\s+eperm\b/i.test(message)
+    || /\bfailed to launch\b/i.test(message)
+    || /\bchromium-based browser\b/i.test(message);
+}
+
+function openBrowserPrintFallback(html) {
+  return new Promise((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    const blob = new Blob([String(html || "")], { type: "text/html" });
+    const blobUrl = URL.createObjectURL(blob);
+    let settled = false;
+
+    const cleanup = () => {
+      if (iframe.parentNode) {
+        iframe.remove();
+      }
+      URL.revokeObjectURL(blobUrl);
+    };
+
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+    iframe.onload = () => {
+      try {
+        const printWindow = iframe.contentWindow;
+        if (!printWindow) {
+          throw new Error("Print preview could not open.");
+        }
+        if ("onafterprint" in printWindow) {
+          printWindow.onafterprint = () => window.setTimeout(finish, 120);
+        }
+        printWindow.focus();
+        window.setTimeout(() => {
+          try {
+            printWindow.print();
+          } catch (error) {
+            cleanup();
+            reject(error);
+            return;
+          }
+          notify(
+            uiWord("Print dialog opened. Choose Save as PDF in your browser.", "تم فتح نافذة الطباعة. اختر الحفظ كملف PDF من المتصفح."),
+            "info"
+          );
+          if (!("onafterprint" in printWindow)) {
+            window.setTimeout(finish, 1500);
+          }
+        }, 120);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    };
+    iframe.onerror = () => {
+      cleanup();
+      reject(new Error("Print preview could not open."));
+    };
+
+    document.body.appendChild(iframe);
+    iframe.src = blobUrl;
+  });
 }
 
 function makeNotification(message, kind = "info") {
@@ -1024,7 +1156,11 @@ function pruneEmptyCodingSessions(exceptId = state.coding.activeSessionId) {
 }
 
 function loadStoredPayload() {
-  const keys = [currentStorageKey(), ...(shouldUseLegacyStorageFallback() ? [STORAGE_KEY, ...LEGACY_STORAGE_KEYS] : [])];
+  const keys = [
+    currentStorageKey(),
+    ...legacyProfileStorageKeys(),
+    ...(shouldUseLegacyStorageFallback() ? [STORAGE_KEY, ...LEGACY_STORAGE_KEYS] : [])
+  ];
   for (const key of keys) {
     const parsed = readStorageJson(key);
     if (parsed) {
@@ -1391,8 +1527,8 @@ function loadState() {
   const notes = migrateNotesState(parsed);
   const quiz = migrateQuizState(parsed);
   const planner = migratePlannerState(parsed);
-  const cv = migrateCvState(parsed);
-  const ieee = migrateIeeeState(parsed);
+  const cv = migrateCvStateSafe(parsed);
+  const ieee = migrateIeeeStateSafe(parsed);
 
   return {
     ...deepClone(defaultState),
@@ -1448,8 +1584,32 @@ let state = deepClone(defaultState);
 state = loadState();
 
 function persist() {
-  localStorage.setItem(currentStorageKey(), JSON.stringify(state));
-  touchActiveProfile();
+  try {
+    localStorage.setItem(currentStorageKey(), JSON.stringify(state));
+  } catch (error) {
+    console.warn("Could not persist local state.", error);
+  }
+}
+
+let pendingPersistTimer = 0;
+
+function persistSoon(delayMs = 180) {
+  if (pendingPersistTimer) {
+    window.clearTimeout(pendingPersistTimer);
+  }
+  pendingPersistTimer = window.setTimeout(() => {
+    pendingPersistTimer = 0;
+    persist();
+  }, delayMs);
+}
+
+function flushPendingPersist() {
+  if (!pendingPersistTimer) {
+    return;
+  }
+  window.clearTimeout(pendingPersistTimer);
+  pendingPersistTimer = 0;
+  persist();
 }
 
 function scrollToBottom(node) {
@@ -1646,17 +1806,6 @@ function renderSettingsPanel() {
     return "";
   }
 
-  const profile = activeProfile();
-  const profileRows = profileStore.profiles.map((item) => `
-    <div class="profile-row ${item.id === profile.id ? "is-active" : ""}">
-      <button class="list-item" data-switch-profile="${item.id}" type="button" ${item.id === profile.id ? 'aria-current="true"' : ""}>
-        <strong>${escapeHtml(item.name)}</strong>
-        <span>${escapeHtml(formatDateLabel(item.updatedAt))}</span>
-      </button>
-      ${profileStore.profiles.length > 1 ? `<button class="list-delete" data-delete-profile="${item.id}" type="button" aria-label="${escapeHtml(uiWord("Delete profile", "حذف المساحة"))}">&#10005;</button>` : ""}
-    </div>
-  `).join("");
-
   return `
     <div class="modal-overlay" id="settingsOverlay" role="presentation">
       <button class="modal-backdrop" id="settingsBackdrop" type="button" aria-label="${escapeHtml(uiWord("Close settings", "إغلاق الإعدادات"))}"></button>
@@ -1698,23 +1847,6 @@ function renderSettingsPanel() {
               <p class="muted-line">${escapeHtml(uiWord("Press / to focus the main prompt on this page.", "اضغط / للانتقال إلى حقل الإدخال الأساسي."))}</p>
               <p class="muted-line">${escapeHtml(uiWord("Press Esc to close this panel.", "اضغط Esc لإغلاق هذه اللوحة."))}</p>
             </div>
-          </div>
-        </section>
-        <div class="rail-divider"></div>
-        <section class="settings-section" aria-labelledby="settingsProfileTitle">
-          <p class="section-label" id="settingsProfileTitle">${escapeHtml(uiWord("Local study profiles", "المساحات المحلية"))}</p>
-          <form class="stack-form stack-form--compact" id="profileNameForm">
-            <div class="form-row">
-              <input id="profileNameInput" type="text" value="${escapeHtml(profile?.name || "My Study Space")}" placeholder="${escapeHtml(uiWord("Profile name", "اسم المساحة"))}">
-              <button class="button button--soft" type="submit">${escapeHtml(uiWord("Save name", "حفظ الاسم"))}</button>
-            </div>
-          </form>
-          <p class="muted-line">${escapeHtml(uiWord("Chats, results, and preferences stay only in this browser on this device.", "المحادثات والنتائج والإعدادات تبقى في هذا المتصفح وعلى هذا الجهاز فقط."))}</p>
-          <div class="profile-list">
-            ${profileRows}
-          </div>
-          <div class="form-row">
-            <button class="button button--primary" id="newProfileButton" type="button">${escapeHtml(uiWord("New profile", "مساحة جديدة"))}</button>
           </div>
         </section>
       </section>
@@ -3036,61 +3168,6 @@ function resetRuntimeTransientState() {
   runtime.speech.lastSpokenText = "";
 }
 
-function switchProfile(profileId) {
-  if (!profileStore.profiles.some((profile) => profile.id === profileId) || profileStore.activeId === profileId) {
-    runtime.panel = "";
-    renderApp();
-    return;
-  }
-  profileStore.activeId = profileId;
-  persistProfileStore();
-  resetRuntimeTransientState();
-  state = loadState();
-  renderApp({ transition: true });
-}
-
-function createFreshProfile() {
-  const profile = createLocalProfile("", profileStore.profiles.length + 1);
-  profileStore.profiles.unshift(profile);
-  profileStore.activeId = profile.id;
-  persistProfileStore();
-  resetRuntimeTransientState();
-  state = createFreshState();
-  persist();
-  runtime.panel = "settings";
-  renderApp({ transition: true });
-}
-
-function renameActiveProfile(name) {
-  const profile = activeProfile();
-  if (!profile) {
-    return;
-  }
-  profile.name = sanitizeProfileName(name, profile.name || "My Study Space");
-  profile.updatedAt = Date.now();
-  persistProfileStore();
-  renderApp();
-}
-
-function deleteProfile(profileId) {
-  if (profileStore.profiles.length <= 1) {
-    return;
-  }
-  const deletingActive = profileStore.activeId === profileId;
-  profileStore.profiles = profileStore.profiles.filter((profile) => profile.id !== profileId);
-  localStorage.removeItem(profileStorageKey(profileId));
-  if (!profileStore.profiles.length) {
-    profileStore.profiles = [createLocalProfile()];
-  }
-  if (deletingActive) {
-    profileStore.activeId = profileStore.profiles[0].id;
-    resetRuntimeTransientState();
-    state = loadState();
-  }
-  persistProfileStore();
-  renderApp({ transition: true });
-}
-
 function getPrimaryFocusTarget() {
   switch (page) {
     case "tutor":
@@ -3137,6 +3214,7 @@ function handlePageHide() {
   if (cleanupEphemeralChats()) {
     persist();
   }
+  flushPendingPersist();
 }
 
 function handleGlobalKeydown(event) {
@@ -3305,7 +3383,7 @@ function syncTutorDraft() {
     return;
   }
   state.tutor.draftText = input.value;
-  persist();
+  persistSoon();
 }
 
 function syncCodingDraft() {
@@ -3315,7 +3393,7 @@ function syncCodingDraft() {
     state.coding.composer.prompt = prompt.value;
   }
   state.coding.composer.code = code ? code.value : "";
-  persist();
+  persistSoon();
 }
 
 function syncCodingPromptPlaceholder() {
@@ -4021,26 +4099,6 @@ function bindSharedEvents() {
   });
   document.getElementById("speakCurrentPage")?.addEventListener("click", toggleSelectionRead);
   document.getElementById("stopSpeech")?.addEventListener("click", () => stopSpeechPlayback());
-  document.getElementById("profileNameForm")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    renameActiveProfile(document.getElementById("profileNameInput")?.value || "");
-  });
-  document.getElementById("newProfileButton")?.addEventListener("click", createFreshProfile);
-  document.querySelectorAll("[data-switch-profile]").forEach((button) => {
-    button.addEventListener("click", () => {
-      switchProfile(button.getAttribute("data-switch-profile") || "");
-    });
-  });
-  document.querySelectorAll("[data-delete-profile]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const profileId = button.getAttribute("data-delete-profile") || "";
-      const profile = profileStore.profiles.find((item) => item.id === profileId);
-      openDeleteConfirm(uiWord("profile", "الملف"), profile?.name || uiWord("this profile", "هذا الملف"), () => {
-        deleteProfile(profileId);
-      });
-    });
-  });
 }
 
 function bindTutorEvents() {
@@ -4083,11 +4141,19 @@ function bindTutorEvents() {
     });
   });
   document.getElementById("tutorFile")?.addEventListener("change", (event) => {
-    const file = event.target.files?.[0] || null;
-    runtime.files.tutor = file;
-    state.tutor.attachmentName = file?.name || "";
-    persist();
-    renderApp();
+    try {
+      const file = validateSelectedFile(event.target.files?.[0] || null, { allowPdf: true, allowText: true });
+      runtime.files.tutor = file;
+      state.tutor.attachmentName = file?.name || "";
+      persist();
+      renderApp();
+    } catch (error) {
+      event.target.value = "";
+      runtime.files.tutor = null;
+      state.tutor.attachmentName = "";
+      renderApp();
+      alertError(error);
+    }
   });
   document.getElementById("tutorRemoveFile")?.addEventListener("click", () => {
     runtime.files.tutor = null;
@@ -4147,11 +4213,19 @@ function bindCodingEvents() {
     });
   });
   document.getElementById("codingFile")?.addEventListener("change", (event) => {
-    const file = event.target.files?.[0] || null;
-    runtime.files.coding = file;
-    state.coding.attachmentName = file?.name || "";
-    persist();
-    renderApp();
+    try {
+      const file = validateSelectedFile(event.target.files?.[0] || null, { allowText: true });
+      runtime.files.coding = file;
+      state.coding.attachmentName = file?.name || "";
+      persist();
+      renderApp();
+    } catch (error) {
+      event.target.value = "";
+      runtime.files.coding = null;
+      state.coding.attachmentName = "";
+      renderApp();
+      alertError(error);
+    }
   });
   document.getElementById("codingRemoveFile")?.addEventListener("click", () => {
     runtime.files.coding = null;
@@ -4189,7 +4263,7 @@ function bindNotesEvents() {
     ensureNoteRecord(event.target.value);
     state.notes.sourceText = event.target.value;
     syncActiveNoteRecord();
-    persist();
+    persistSoon();
   });
   document.getElementById("notesLanguage")?.addEventListener("change", (event) => {
     ensureNoteRecord();
@@ -4198,13 +4272,21 @@ function bindNotesEvents() {
     persist();
   });
   document.getElementById("notesFile")?.addEventListener("change", (event) => {
-    const file = event.target.files?.[0] || null;
-    ensureNoteRecord(file?.name || "");
-    runtime.files.notes = file;
-    state.notes.fileName = file?.name || "";
-    syncActiveNoteRecord();
-    persist();
-    renderApp();
+    try {
+      const file = validateSelectedFile(event.target.files?.[0] || null, { allowPdf: true, allowText: true });
+      ensureNoteRecord(file?.name || "");
+      runtime.files.notes = file;
+      state.notes.fileName = file?.name || "";
+      syncActiveNoteRecord();
+      persist();
+      renderApp();
+    } catch (error) {
+      event.target.value = "";
+      runtime.files.notes = null;
+      state.notes.fileName = "";
+      renderApp();
+      alertError(error);
+    }
   });
 }
 
@@ -4250,7 +4332,7 @@ function bindQuizEvents() {
     ensureExamRecord();
     state.quiz.count = Number(event.target.value) || 6;
     syncActiveExamRecord();
-    persist();
+    persistSoon();
   });
   document.getElementById("quizDifficulty")?.addEventListener("change", (event) => {
     ensureExamRecord();
@@ -4268,16 +4350,24 @@ function bindQuizEvents() {
     ensureExamRecord(event.target.value);
     state.quiz.sourceText = event.target.value;
     syncActiveExamRecord();
-    persist();
+    persistSoon();
   });
   document.getElementById("quizFile")?.addEventListener("change", (event) => {
-    const file = event.target.files?.[0] || null;
-    ensureExamRecord(file?.name || "");
-    runtime.files.quiz = file;
-    state.quiz.fileName = file?.name || "";
-    syncActiveExamRecord();
-    persist();
-    renderApp();
+    try {
+      const file = validateSelectedFile(event.target.files?.[0] || null, { allowPdf: true });
+      ensureExamRecord(file?.name || "");
+      runtime.files.quiz = file;
+      state.quiz.fileName = file?.name || "";
+      syncActiveExamRecord();
+      persist();
+      renderApp();
+    } catch (error) {
+      event.target.value = "";
+      runtime.files.quiz = null;
+      state.quiz.fileName = "";
+      renderApp();
+      alertError(error);
+    }
   });
   updateQuestionSelections();
 }
@@ -4341,7 +4431,7 @@ function bindImagesEvents() {
       runtime.imagesProgress = null;
       renderApp();
     }
-    persist();
+    persistSoon();
   });
   document.getElementById("imagesAspectRatio")?.addEventListener("change", (event) => {
     const nextAspectRatio = String(event.target.value || "1:1");
