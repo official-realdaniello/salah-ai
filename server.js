@@ -1,16 +1,12 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const os = require("os");
 const crypto = require("crypto");
 const net = require("net");
 const zlib = require("zlib");
-const { execFile } = require("child_process");
-const { promisify } = require("util");
-const { URL, pathToFileURL } = require("url");
+const { URL } = require("url");
 
 const ROOT = __dirname;
-const execFileAsync = promisify(execFile);
 loadLocalEnv(path.join(ROOT, ".env"));
 
 function escapeRegExp(value) {
@@ -817,190 +813,13 @@ function renderIeeePdfHtml(documentModel) {
 </html>`;
 }
 
-function existingFilePath(candidate) {
-  const value = sanitizeString(candidate, 600);
-  return value && fs.existsSync(value) ? value : "";
-}
-
-function resolvePdfRendererMode() {
-  const value = sanitizeString(process.env.SALAH_AI_PDF_RENDERER, 20).toLowerCase();
-  if (value === "browser") {
-    return value;
-  }
-  return "browser";
-}
-
-async function resolveExecutableCandidates(command, args = []) {
-  try {
-    const { stdout } = await execFileAsync(command, args, {
-      windowsHide: true,
-      timeout: 3000
-    });
-    return String(stdout || "")
-      .split(/\r?\n/)
-      .map((line) => existingFilePath(line))
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-async function resolvePdfBrowserPath() {
-  const explicitPath = existingFilePath(process.env.SALAH_AI_PDF_BROWSER_PATH);
-  if (explicitPath) {
-    return explicitPath;
-  }
-
-  const installRoots = Array.from(new Set([
-    process.env.LOCALAPPDATA,
-    process.env.ProgramFiles,
-    process.env["ProgramFiles(x86)"],
-    process.env.ProgramW6432
-  ].map((value) => sanitizeString(value, 260)).filter(Boolean)));
-
-  const windowsCandidates = installRoots.flatMap((rootPath) => [
-    path.join(rootPath, "Microsoft", "Edge", "Application", "msedge.exe"),
-    path.join(rootPath, "Microsoft", "Edge Beta", "Application", "msedge.exe"),
-    path.join(rootPath, "Google", "Chrome", "Application", "chrome.exe"),
-    path.join(rootPath, "Google", "Chrome SxS", "Application", "chrome.exe"),
-    path.join(rootPath, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
-    path.join(rootPath, "BraveSoftware", "Brave-Browser-Beta", "Application", "brave.exe"),
-    path.join(rootPath, "Chromium", "Application", "chrome.exe"),
-    path.join(rootPath, "Vivaldi", "Application", "vivaldi.exe")
-  ]);
-  const macCandidates = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi"
-  ];
-  const linuxCandidates = [
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/usr/bin/brave-browser",
-    "/usr/bin/brave",
-    "/usr/bin/microsoft-edge",
-    "/usr/bin/microsoft-edge-stable",
-    "/usr/bin/vivaldi",
-    "/snap/bin/chromium"
-  ];
-
-  const fixedCandidates = Array.from(new Set([
-    ...windowsCandidates,
-    ...macCandidates,
-    ...linuxCandidates
-  ]))
-    .map(existingFilePath)
-    .find(Boolean);
-  if (fixedCandidates) {
-    return fixedCandidates;
-  }
-
-  const commandCandidates = process.platform === "win32"
-    ? [
-        ...await resolveExecutableCandidates("where.exe", ["brave.exe"]),
-        ...await resolveExecutableCandidates("where.exe", ["msedge.exe"]),
-        ...await resolveExecutableCandidates("where.exe", ["chrome.exe"]),
-        ...await resolveExecutableCandidates("where.exe", ["vivaldi.exe"])
-      ]
-    : [
-        ...await resolveExecutableCandidates("which", ["brave-browser"]),
-        ...await resolveExecutableCandidates("which", ["brave"]),
-        ...await resolveExecutableCandidates("which", ["google-chrome"]),
-        ...await resolveExecutableCandidates("which", ["google-chrome-stable"]),
-        ...await resolveExecutableCandidates("which", ["chromium"]),
-        ...await resolveExecutableCandidates("which", ["chromium-browser"]),
-        ...await resolveExecutableCandidates("which", ["microsoft-edge"]),
-        ...await resolveExecutableCandidates("which", ["microsoft-edge-stable"]),
-        ...await resolveExecutableCandidates("which", ["vivaldi"])
-      ];
-
-  return commandCandidates.find(Boolean) || "";
-}
-
-async function renderPdfWithBrowser(browserPath, htmlPath, pdfPath) {
-  const fileUrl = pathToFileURL(htmlPath).toString();
-  const baseArgs = [
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-gpu",
-    "--run-all-compositor-stages-before-draw",
-    "--disable-print-preview",
-    "--no-pdf-header-footer",
-    `--print-to-pdf=${pdfPath}`,
-    fileUrl
-  ];
-  try {
-    await execFileAsync(browserPath, ["--headless=new", ...baseArgs], { windowsHide: true, timeout: 60000 });
-  } catch (newHeadlessError) {
-    try {
-      await execFileAsync(browserPath, ["--headless", ...baseArgs], { windowsHide: true, timeout: 60000 });
-    } catch (legacyHeadlessError) {
-      throw new Error(`${newHeadlessError.message}; fallback failed: ${legacyHeadlessError.message}`);
-    }
-  }
-}
-
-async function renderPdfFromHtml(html, preferredFileName = "resume.pdf") {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "salah-cv-"));
-  const htmlPath = path.join(tempDir, "resume.html");
-  const pdfPath = path.join(tempDir, preferredFileName);
-  fs.writeFileSync(htmlPath, html, "utf8");
-
-  try {
-    const mode = resolvePdfRendererMode();
-    if (mode !== "browser") {
-      const error = new Error("Only the browser PDF renderer is supported.");
-      error.statusCode = 500;
-      throw error;
-    }
-
-    if (fs.existsSync(pdfPath)) {
-      fs.rmSync(pdfPath, { force: true });
-    }
-
-    const browserPath = await resolvePdfBrowserPath();
-    if (!browserPath) {
-      const error = new Error("PDF export failed. Chromium browser renderer was not found. Install Chrome/Edge/Brave/Chromium/Vivaldi, or configure SALAH_AI_PDF_BROWSER_PATH.");
-      error.statusCode = 503;
-      throw error;
-    }
-
-    try {
-      await renderPdfWithBrowser(browserPath, htmlPath, pdfPath);
-    } catch (renderError) {
-      const error = new Error(`PDF export failed. browser renderer failed: ${renderError.message}. Install Chrome/Edge/Brave/Chromium/Vivaldi, or configure SALAH_AI_PDF_BROWSER_PATH.`);
-      error.statusCode = 503;
-      throw error;
-    }
-
-    if (!fs.existsSync(pdfPath)) {
-      const error = new Error("PDF export failed. Browser renderer finished without creating a PDF file.");
-      error.statusCode = 503;
-      throw error;
-    }
-
-    return fs.readFileSync(pdfPath);
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-}
-
-function sendPdf(res, fileName, pdfBuffer) {
-  const safeFileName = sanitizeString(fileName, 120) || "resume.pdf";
-  const asciiFallback = slugifyFileName(safeFileName.replace(/\.pdf$/i, ""), "resume");
-  res.writeHead(200, {
-    "Content-Type": "application/pdf",
+function sendHtml(res, statusCode, payload) {
+  res.writeHead(statusCode, {
+    "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
-    "Content-Disposition": `attachment; filename="${asciiFallback}.pdf"; filename*=UTF-8''${encodeURIComponent(safeFileName)}`,
-    "Content-Length": pdfBuffer.length
+    "X-Content-Type-Options": "nosniff"
   });
-  res.end(pdfBuffer);
+  res.end(payload);
 }
 
 function sanitizeModel(value, fallback) {
@@ -4275,10 +4094,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/cv-pdf") {
+    if (req.method === "POST" && requestUrl.pathname === "/api/cv-print") {
       assertTrustedBrowserOrigin(req);
       assertJsonRequest(req);
-      enforceRateLimit(req, "cv-pdf", { limit: 10, windowMs: 5 * 60 * 1000 });
+      enforceRateLimit(req, "cv-print", { limit: 20, windowMs: 5 * 60 * 1000 });
       const body = await readJsonBody(req);
       const documentModel = sanitizeCvDocument(body.document);
       if (!documentModel.name && !documentModel.professionalTitle && !documentModel.contactLines.length && !documentModel.linkLines.length && !documentModel.sections.length) {
@@ -4290,15 +4109,14 @@ const server = http.createServer(async (req, res) => {
       }
 
       const html = renderCvPdfHtml(documentModel);
-      const pdfBuffer = await renderPdfFromHtml(html, documentModel.fileName || "resume.pdf");
-      sendPdf(res, documentModel.fileName || "resume.pdf", pdfBuffer);
+      sendHtml(res, 200, html);
       return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/ieee-pdf") {
+    if (req.method === "POST" && requestUrl.pathname === "/api/ieee-print") {
       assertTrustedBrowserOrigin(req);
       assertJsonRequest(req);
-      enforceRateLimit(req, "ieee-pdf", { limit: 10, windowMs: 5 * 60 * 1000 });
+      enforceRateLimit(req, "ieee-print", { limit: 20, windowMs: 5 * 60 * 1000 });
       const body = await readJsonBody(req);
       const documentModel = sanitizeIeeeDocument(body.document);
       if (!documentModel.hasContent) {
@@ -4310,8 +4128,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const html = renderIeeePdfHtml(documentModel);
-      const pdfBuffer = await renderPdfFromHtml(html, documentModel.fileName || "ieee-paper.pdf");
-      sendPdf(res, documentModel.fileName || "ieee-paper.pdf", pdfBuffer);
+      sendHtml(res, 200, html);
       return;
     }
 

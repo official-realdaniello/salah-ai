@@ -881,7 +881,7 @@ function renderCvPreview() {
         <p class="section-label">${escapeHtml(uiWord("Generated CV", "السيرة الذاتية المُنشأة"))}</p>
         <h2 class="panel-title" id="cvPreviewTitle" tabindex="-1">${escapeHtml(uiWord("Preview", "المعاينة"))}</h2>
       </div>
-      <button class="button button--primary" id="cvDownload" type="button" ${runtime.busy.cv ? "disabled" : ""}>${escapeHtml(runtime.busy.cv ? uiWord("Preparing PDF...", "جارٍ تجهيز PDF...") : uiWord("Download PDF", "تنزيل PDF"))}</button>
+      <button class="button button--primary" id="cvDownload" type="button" ${runtime.busy.cv ? "disabled" : ""}>${escapeHtml(runtime.busy.cv ? uiWord("Preparing print view...", "جارٍ تجهيز صفحة الطباعة...") : uiWord("Print / Save PDF", "طباعة / حفظ PDF"))}</button>
     </div>
     <div class="cv-preview-box">
       <div class="cv-preview-scroll" id="cvPreviewScroll" role="region" tabindex="0" aria-label="${escapeHtml(uiWord("CV preview area", "معاينة السيرة الذاتية"))}">
@@ -923,7 +923,7 @@ function renderCvPage() {
     <section class="hero glass cv-hero">
       <p class="eyebrow">${escapeHtml(uiWord("CV Creator", "منشئ السيرة الذاتية"))}</p>
       <h1 class="page-title">${escapeHtml(uiWord("Build a cleaner, ATS-friendly CV.", "أنشئ سيرة ذاتية أنظف ومتوافقة مع أنظمة التوظيف."))}</h1>
-      <p class="page-subtitle">${escapeHtml(uiWord("Every field is optional. Empty fields stay out of the final CV. Generate the preview, then download a polished PDF.", "كل الحقول اختيارية. الحقول الفارغة لا تظهر في السيرة النهائية. أنشئ المعاينة ثم نزّل PDF مصقولًا."))}</p>
+      <p class="page-subtitle">${escapeHtml(uiWord("Every field is optional. Empty fields stay out of the final CV. Generate the preview, then open the browser print dialog and save it as PDF.", "كل الحقول اختيارية. الحقول الفارغة لا تظهر في السيرة النهائية. أنشئ المعاينة ثم افتح نافذة الطباعة واحفظها كملف PDF."))}</p>
     </section>
     <section class="cv-layout">
       <article class="surface editor-panel cv-form-panel">
@@ -1123,8 +1123,8 @@ function generateCvFromForm(options) {
   return nextDocument;
 }
 
-async function downloadCvPdf(documentModel) {
-  const response = await fetch("/api/cv-pdf", {
+async function fetchCvPrintableHtml(documentModel) {
+  const response = await fetch("/api/cv-print", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1134,34 +1134,15 @@ async function downloadCvPdf(documentModel) {
   });
 
   if (!response.ok) {
-    let errorMessage = "CV PDF export failed.";
+    let errorMessage = "CV print export failed.";
     try {
       const payload = await response.json();
       errorMessage = payload.error || errorMessage;
-    } catch {
-      errorMessage = await response.text() || errorMessage;
-    }
+    } catch {}
     throw new Error(errorMessage);
   }
 
-  const blob = await response.blob();
-  triggerFileDownload(blob, documentModel.fileName || "resume.pdf");
-}
-
-function triggerFileDownload(blob, fileName) {
-  const downloadUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  if (typeof anchor.download === "string") {
-    anchor.href = downloadUrl;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
-    return;
-  }
-  window.open(downloadUrl, "_blank", "noopener");
-  setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000);
+  return response.text();
 }
 
 async function handleCvDownload() {
@@ -1173,7 +1154,8 @@ async function handleCvDownload() {
   runtime.busy.cv = true;
   renderApp();
   try {
-    await downloadCvPdf(documentModel);
+    const html = await fetchCvPrintableHtml(documentModel);
+    await openBrowserPrintFallback(html);
   } catch (error) {
     alertError(error);
   } finally {

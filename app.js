@@ -572,6 +572,77 @@ function downloadDataUrl(dataUrl, fileName) {
   anchor.remove();
 }
 
+function openBrowserPrintFallback(html) {
+  return new Promise((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    const blob = new Blob([String(html || "")], { type: "text/html" });
+    const blobUrl = URL.createObjectURL(blob);
+    let settled = false;
+
+    const cleanup = () => {
+      if (iframe.parentNode) {
+        iframe.remove();
+      }
+      URL.revokeObjectURL(blobUrl);
+    };
+
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+    iframe.onload = () => {
+      try {
+        const printWindow = iframe.contentWindow;
+        if (!printWindow) {
+          throw new Error("Print preview could not open.");
+        }
+        if ("onafterprint" in printWindow) {
+          printWindow.onafterprint = () => window.setTimeout(finish, 120);
+        }
+        printWindow.focus();
+        window.setTimeout(() => {
+          try {
+            printWindow.print();
+          } catch (error) {
+            cleanup();
+            reject(error);
+            return;
+          }
+          notify(
+            uiWord("Print dialog opened. Choose Save as PDF in your browser.", "تم فتح نافذة الطباعة. اختر الحفظ كملف PDF من المتصفح."),
+            "info"
+          );
+          if (!("onafterprint" in printWindow)) {
+            window.setTimeout(finish, 1500);
+          }
+        }, 120);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    };
+    iframe.onerror = () => {
+      cleanup();
+      reject(new Error("Print preview could not open."));
+    };
+
+    document.body.appendChild(iframe);
+    iframe.src = blobUrl;
+  });
+}
+
 function makeNotification(message, kind = "info") {
   return { id: makeId("note"), message, kind };
 }

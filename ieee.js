@@ -802,9 +802,9 @@ function renderIeeePreview(documentModel) {
         <h2 class="panel-title" id="ieeePreviewTitle" tabindex="-1">${escapeHtml(documentModel.versionLabel)}</h2>
       </div>
       <div class="ieee-preview-actions">
-        <button class="button button--soft" id="ieeeDownloadFull" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(uiWord("Download Full PDF", "تنزيل PDF الكامل"))}</button>
-        <button class="button button--soft" id="ieeeDownloadAnonymous" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(uiWord("Download Anonymous PDF", "تنزيل PDF المجهول"))}</button>
-        <button class="button button--primary" id="ieeeDownloadBoth" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(runtime.busy.ieee ? uiWord("Preparing PDFs...", "جارٍ تجهيز ملفات PDF...") : uiWord("Download Both PDFs", "تنزيل النسختين PDF"))}</button>
+        <button class="button button--soft" id="ieeeDownloadFull" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(uiWord("Print Full / Save PDF", "طباعة الكامل / حفظ PDF"))}</button>
+        <button class="button button--soft" id="ieeeDownloadAnonymous" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(uiWord("Print Anonymous / Save PDF", "طباعة المجهول / حفظ PDF"))}</button>
+        <button class="button button--primary" id="ieeeDownloadBoth" type="button" ${runtime.busy.ieee ? "disabled" : ""}>${escapeHtml(runtime.busy.ieee ? uiWord("Preparing print views...", "جارٍ تجهيز صفحات الطباعة...") : uiWord("Print Both / Save PDFs", "طباعة النسختين / حفظ PDF"))}</button>
       </div>
     </div>
     ${renderIeeePreviewWarningPanel()}
@@ -881,7 +881,7 @@ function renderIeeePage() {
     <section class="hero glass cv-hero">
       <p class="eyebrow">${escapeHtml(uiWord("IEEE Paper Generator", "مولد ورقة IEEE"))}</p>
       <h1 class="page-title">${escapeHtml(uiWord("Prepare a clean, blind-review-ready IEEE-style paper.", "أنشئ ورقة بأسلوب IEEE بشكل نظيف وجاهز للمراجعة العمياء."))}</h1>
-      <p class="page-subtitle">${escapeHtml(uiWord("Fill only what you need, preview the paper in a formal two-column layout, then export the full version, anonymous version, or both as PDF.", "املأ فقط ما تحتاجه، ثم عاين الورقة بتنسيق ثنائي الأعمدة وصدّر النسخة الكاملة أو المجهولة أو كلتيهما بصيغة PDF."))}</p>
+      <p class="page-subtitle">${escapeHtml(uiWord("Fill only what you need, preview the paper in a formal two-column layout, then open the browser print dialog to save the full version, anonymous version, or both as PDF.", "املأ فقط ما تحتاجه، ثم عاين الورقة بتنسيق ثنائي الأعمدة وافتح نافذة الطباعة لحفظ النسخة الكاملة أو المجهولة أو كلتيهما كملف PDF."))}</p>
     </section>
     <section class="ieee-layout">
       <article class="surface editor-panel ieee-form-panel">
@@ -997,8 +997,8 @@ function generateIeeeFromForm(options = {}) {
   return state.ieee.generated;
 }
 
-async function downloadIeeePdf(documentModel) {
-  const response = await fetch("/api/ieee-pdf", {
+async function fetchIeeePrintableHtml(documentModel) {
+  const response = await fetch("/api/ieee-print", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1008,34 +1008,15 @@ async function downloadIeeePdf(documentModel) {
   });
 
   if (!response.ok) {
-    let errorMessage = "IEEE paper PDF export failed.";
+    let errorMessage = "IEEE paper print export failed.";
     try {
       const payload = await response.json();
       errorMessage = payload.error || errorMessage;
-    } catch {
-      errorMessage = await response.text() || errorMessage;
-    }
+    } catch {}
     throw new Error(errorMessage);
   }
 
-  const blob = await response.blob();
-  triggerFileDownload(blob, documentModel.fileName || "ieee-paper.pdf");
-}
-
-function triggerFileDownload(blob, fileName) {
-  const downloadUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  if (typeof anchor.download === "string") {
-    anchor.href = downloadUrl;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
-    return;
-  }
-  window.open(downloadUrl, "_blank", "noopener");
-  setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000);
+  return response.text();
 }
 
 async function handleIeeeDownload(mode) {
@@ -1056,19 +1037,19 @@ async function handleIeeeDownload(mode) {
   renderApp();
   try {
     if (mode === "full" && full) {
-      await downloadIeeePdf(full);
+      await openBrowserPrintFallback(await fetchIeeePrintableHtml(full));
       return;
     }
     if (mode === "anonymous" && anonymous) {
-      await downloadIeeePdf(anonymous);
+      await openBrowserPrintFallback(await fetchIeeePrintableHtml(anonymous));
       return;
     }
     if (full) {
-      await downloadIeeePdf(full);
+      await openBrowserPrintFallback(await fetchIeeePrintableHtml(full));
     }
     if (anonymous) {
       await new Promise((resolve) => setTimeout(resolve, 180));
-      await downloadIeeePdf(anonymous);
+      await openBrowserPrintFallback(await fetchIeeePrintableHtml(anonymous));
     }
   } catch (error) {
     alertError(error);
