@@ -188,16 +188,15 @@ const STATIC_CACHE_CONTROL_BY_EXTENSION = {
 };
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",  // Added 'unsafe-inline' for the printed document
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com",
+  "script-src 'self'",
+  "style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com",
   "img-src 'self' data: blob:",
   "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:",
   "connect-src 'self'",
-  "frame-src 'self' blob:",
+  "frame-src * blob: data:",
   "object-src 'none'",
   "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'"
+  "form-action 'self'"
 ].join("; ");
 
 function isAllowedStaticPath(fileName) {
@@ -440,10 +439,7 @@ function isSecureRequest(req) {
 function applySecurityHeaders(req, res) {
   res.setHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY);
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
   if (isSecureRequest(req)) {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
