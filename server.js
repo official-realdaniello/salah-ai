@@ -4,10 +4,10 @@ const path = require("path");
 const crypto = require("crypto");
 const net = require("net");
 const zlib = require("zlib");
+const PDFDocument = require("pdfkit");
 const { URL } = require("url");
 
 const ROOT = __dirname;
-let puppeteerModule = null;
 loadLocalEnv(path.join(ROOT, ".env"));
 
 function escapeRegExp(value) {
@@ -845,58 +845,305 @@ function sendPdf(res, statusCode, payload, fileName) {
   res.end(payload);
 }
 
-function getPuppeteer() {
-  if (!puppeteerModule) {
-    puppeteerModule = require("puppeteer");
+const PDF_POINTS_PER_MM = 72 / 25.4;
+const PDF_SYSTEM_FONT_ROOT = process.platform === "win32"
+  ? path.join(process.env.WINDIR || "C:\\Windows", "Fonts")
+  : "/usr/share/fonts";
+
+function mm(value) {
+  return value * PDF_POINTS_PER_MM;
+}
+
+function firstExistingFile(paths) {
+  return paths.find((candidate) => candidate && fs.existsSync(candidate));
+}
+
+function pdfFontPathCandidates(kind) {
+  const envKey = `PDF_${kind.toUpperCase()}_FONT_PATH`;
+  const configured = sanitizeString(process.env[envKey], 1000);
+  const windowsFonts = [
+    path.join(PDF_SYSTEM_FONT_ROOT, "arial.ttf"),
+    path.join(PDF_SYSTEM_FONT_ROOT, "segoeui.ttf"),
+    path.join(PDF_SYSTEM_FONT_ROOT, "tahoma.ttf"),
+    path.join(PDF_SYSTEM_FONT_ROOT, "times.ttf"),
+    path.join(PDF_SYSTEM_FONT_ROOT, "arialbd.ttf"),
+    path.join(PDF_SYSTEM_FONT_ROOT, "segoeuib.ttf"),
+    path.join(PDF_SYSTEM_FONT_ROOT, "timesbd.ttf")
+  ];
+  const linuxSans = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+  ];
+  const linuxSansBold = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"
+  ];
+  const linuxSerif = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSerif.ttf"
+  ];
+  const linuxSerifBold = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf"
+  ];
+
+  const defaults = {
+    sans: process.platform === "win32" ? windowsFonts : linuxSans,
+    sans_bold: process.platform === "win32" ? windowsFonts : linuxSansBold,
+    serif: process.platform === "win32" ? windowsFonts : linuxSerif,
+    serif_bold: process.platform === "win32" ? windowsFonts : linuxSerifBold
+  };
+
+  return [configured, ...(defaults[kind] || [])].filter(Boolean);
+}
+
+function registerPdfFonts(doc) {
+  const sans = firstExistingFile(pdfFontPathCandidates("sans"));
+  const sansBold = firstExistingFile(pdfFontPathCandidates("sans_bold")) || sans;
+  const serif = firstExistingFile(pdfFontPathCandidates("serif"));
+  const serifBold = firstExistingFile(pdfFontPathCandidates("serif_bold")) || serif;
+  const fonts = {
+    sans: sans ? "AppSans" : "Helvetica",
+    sansBold: sansBold ? "AppSansBold" : "Helvetica-Bold",
+    serif: serif ? "AppSerif" : "Times-Roman",
+    serifBold: serifBold ? "AppSerifBold" : "Times-Bold"
+  };
+
+  if (sans) {
+    doc.registerFont(fonts.sans, sans);
   }
-  return puppeteerModule;
+  if (sansBold) {
+    doc.registerFont(fonts.sansBold, sansBold);
+  }
+  if (serif) {
+    doc.registerFont(fonts.serif, serif);
+  }
+  if (serifBold) {
+    doc.registerFont(fonts.serifBold, serifBold);
+  }
+
+  return fonts;
 }
 
-function chromeExecutablePath() {
-  return (
-    sanitizeString(process.env.PUPPETEER_EXECUTABLE_PATH, 1000)
-    || sanitizeString(process.env.CHROME_PATH, 1000)
-    || sanitizeString(process.env.GOOGLE_CHROME_BIN, 1000)
-  );
-}
+function collectPdfBuffer(options, buildDocument) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const doc = new PDFDocument(options);
+    doc.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
 
-async function renderPdfBuffer(html) {
-  const puppeteer = getPuppeteer();
-  const executablePath = chromeExecutablePath();
-  let browser;
-
-  try {
-    browser = await puppeteer.launch({
-      ...(executablePath ? { executablePath } : {}),
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--font-render-hinting=none"
-      ]
-    });
-
-    const page = await browser.newPage();
-    await page.emulateMediaType("print");
-    await page.setContent(String(html || ""), {
-      waitUntil: ["load", "networkidle0"],
-      timeout: 30000
-    });
-    await page.evaluate(() => document.fonts?.ready).catch(() => {});
-
-    const pdf = await page.pdf({
-      format: "A4",
-      printBackground: true,
-      preferCSSPageSize: true,
-      timeout: 30000
-    });
-    return Buffer.from(pdf);
-  } finally {
-    if (browser) {
-      await browser.close().catch(() => {});
+    try {
+      buildDocument(doc, registerPdfFonts(doc));
+      doc.end();
+    } catch (error) {
+      reject(error);
     }
+  });
+}
+
+function pdfText(value) {
+  return String(value ?? "").replace(/\r/g, "").trim();
+}
+
+function pdfLines(values) {
+  return Array.isArray(values) ? values.map(pdfText).filter(Boolean) : [];
+}
+
+function pdfAlign(documentModel) {
+  return documentModel.direction === "rtl" ? "right" : "left";
+}
+
+function pdfContentWidth(doc) {
+  return doc.page.width - doc.page.margins.left - doc.page.margins.right;
+}
+
+function pdfEnsureSpace(doc, height) {
+  if (doc.y + height > doc.page.height - doc.page.margins.bottom) {
+    doc.addPage();
   }
+}
+
+function drawPdfRule(doc) {
+  const startX = doc.page.margins.left;
+  doc.moveTo(startX, doc.y)
+    .lineTo(startX + pdfContentWidth(doc), doc.y)
+    .lineWidth(0.6)
+    .strokeColor("#d7d7d7")
+    .stroke();
+}
+
+function drawPdfParagraph(doc, text, options = {}) {
+  const content = pdfText(text);
+  if (!content) {
+    return;
+  }
+  doc.text(content, {
+    width: pdfContentWidth(doc),
+    lineGap: options.lineGap ?? 2,
+    align: options.align || "left"
+  });
+}
+
+async function renderCvPdfBuffer(documentModel) {
+  const align = pdfAlign(documentModel);
+  return collectPdfBuffer({
+    size: "A4",
+    margins: { top: mm(15), right: mm(14), bottom: mm(15), left: mm(14) },
+    info: { Title: documentModel.name || "CV" }
+  }, (doc, fonts) => {
+    doc.font(fonts.sansBold).fontSize(24).fillColor("#111111");
+    drawPdfParagraph(doc, documentModel.name || "CV", { align, lineGap: 0 });
+
+    if (documentModel.professionalTitle) {
+      doc.moveDown(0.25).font(fonts.sansBold).fontSize(12).fillColor("#333333");
+      drawPdfParagraph(doc, documentModel.professionalTitle, { align, lineGap: 0 });
+    }
+
+    const contactLine = [...pdfLines(documentModel.contactLines), ...pdfLines(documentModel.linkLines)].join(" | ");
+    if (contactLine) {
+      doc.moveDown(0.35).font(fonts.sans).fontSize(9.5).fillColor("#333333");
+      drawPdfParagraph(doc, contactLine, { align, lineGap: 0 });
+    }
+
+    doc.moveDown(0.8);
+    drawPdfRule(doc);
+
+    for (const section of documentModel.sections || []) {
+      pdfEnsureSpace(doc, 60);
+      doc.moveDown(0.8).font(fonts.sansBold).fontSize(10.5).fillColor("#111111");
+      drawPdfParagraph(doc, section.title, { align, lineGap: 0 });
+      doc.moveDown(0.2);
+      drawPdfRule(doc);
+      doc.moveDown(0.45);
+
+      if (section.summary) {
+        doc.font(fonts.sans).fontSize(10.2).fillColor("#222222");
+        drawPdfParagraph(doc, section.summary, { align });
+        continue;
+      }
+
+      for (const item of section.items || []) {
+        pdfEnsureSpace(doc, 52);
+        if (item.title) {
+          doc.font(fonts.sansBold).fontSize(10.4).fillColor("#111111");
+          drawPdfParagraph(doc, item.title, { align, lineGap: 0 });
+        }
+        if (item.rightText) {
+          doc.font(fonts.sans).fontSize(9.2).fillColor("#444444");
+          drawPdfParagraph(doc, item.rightText, { align, lineGap: 0 });
+        }
+        if (item.metaLine) {
+          doc.font(fonts.sans).fontSize(9.5).fillColor("#555555");
+          drawPdfParagraph(doc, item.metaLine, { align, lineGap: 0 });
+        }
+
+        doc.font(fonts.sans).fontSize(10).fillColor("#222222");
+        for (const line of pdfLines(item.body)) {
+          drawPdfParagraph(doc, line, { align });
+        }
+        for (const line of pdfLines(item.bullets)) {
+          drawPdfParagraph(doc, `- ${line}`, { align });
+        }
+        doc.moveDown(0.45);
+      }
+    }
+  });
+}
+
+function drawIeeeHeading(doc, fonts, title, align) {
+  pdfEnsureSpace(doc, 42);
+  doc.moveDown(0.55).font(fonts.serifBold).fontSize(10).fillColor("#111111");
+  drawPdfParagraph(doc, title, { align, lineGap: 0 });
+}
+
+async function renderIeeePdfBuffer(documentModel) {
+  const align = pdfAlign(documentModel);
+  return collectPdfBuffer({
+    size: "A4",
+    margins: { top: mm(12), right: mm(11), bottom: mm(12), left: mm(11) },
+    info: { Title: documentModel.title || "IEEE Paper" }
+  }, (doc, fonts) => {
+    doc.font(fonts.serifBold).fontSize(18).fillColor("#111111");
+    doc.text(pdfText(documentModel.title || "Untitled Paper"), {
+      width: pdfContentWidth(doc),
+      align: "center",
+      lineGap: 1
+    });
+
+    doc.moveDown(0.6);
+    if (documentModel.version === "anonymous") {
+      doc.font(fonts.serifBold).fontSize(10.5).fillColor("#333333");
+      doc.text(pdfText(documentModel.anonymousLabel), { width: pdfContentWidth(doc), align: "center" });
+    } else if (documentModel.authors?.length) {
+      doc.font(fonts.serif).fontSize(9.5).fillColor("#222222");
+      for (const author of documentModel.authors) {
+        const authorLines = [
+          author.fullName,
+          author.department,
+          author.institution,
+          author.location,
+          author.email
+        ].map(pdfText).filter(Boolean);
+        if (authorLines.length) {
+          doc.text(authorLines.join("\n"), { width: pdfContentWidth(doc), align: "center", lineGap: 1 });
+          doc.moveDown(0.35);
+        }
+      }
+    }
+
+    if (documentModel.abstractParagraphs?.length) {
+      drawIeeeHeading(doc, fonts, documentModel.abstractTitle, align);
+      doc.font(fonts.serif).fontSize(9.5).fillColor("#111111");
+      for (const paragraph of pdfLines(documentModel.abstractParagraphs)) {
+        drawPdfParagraph(doc, paragraph, { align, lineGap: 1.5 });
+      }
+    }
+
+    if (documentModel.keywords?.length) {
+      drawIeeeHeading(doc, fonts, documentModel.keywordsTitle, align);
+      doc.font(fonts.serif).fontSize(9.5).fillColor("#111111");
+      drawPdfParagraph(doc, documentModel.keywords.join(", "), { align, lineGap: 1.5 });
+    }
+
+    for (const section of documentModel.sections || []) {
+      drawIeeeHeading(doc, fonts, section.title, align);
+      doc.font(fonts.serif).fontSize(9.5).fillColor("#111111");
+      for (const paragraph of pdfLines(section.paragraphs)) {
+        drawPdfParagraph(doc, paragraph, { align, lineGap: 1.5 });
+        doc.moveDown(0.35);
+      }
+    }
+
+    if (documentModel.references?.length) {
+      drawIeeeHeading(doc, fonts, documentModel.referencesTitle, align);
+      doc.font(fonts.serif).fontSize(9).fillColor("#111111");
+      for (const reference of pdfLines(documentModel.references)) {
+        drawPdfParagraph(doc, reference, { align, lineGap: 1.2 });
+        doc.moveDown(0.2);
+      }
+    }
+
+    if (documentModel.acknowledgments?.length) {
+      drawIeeeHeading(doc, fonts, documentModel.acknowledgmentsTitle, align);
+      doc.font(fonts.serif).fontSize(9.5).fillColor("#111111");
+      for (const paragraph of pdfLines(documentModel.acknowledgments)) {
+        drawPdfParagraph(doc, paragraph, { align, lineGap: 1.5 });
+      }
+    }
+
+    if (documentModel.supplementaryItems?.length) {
+      drawIeeeHeading(doc, fonts, documentModel.supplementaryTitle, align);
+      doc.font(fonts.serif).fontSize(9).fillColor("#111111");
+      for (const item of documentModel.supplementaryItems) {
+        drawPdfParagraph(doc, `${item.label}: ${item.value}`, { align, lineGap: 1.2 });
+      }
+    }
+  });
 }
 
 function sanitizeModel(value, fallback) {
@@ -4186,13 +4433,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const html = renderCvPdfHtml(documentModel);
       if (isPdfExport) {
-        const pdf = await renderPdfBuffer(html);
+        const pdf = await renderCvPdfBuffer(documentModel);
         sendPdf(res, 200, pdf, documentModel.fileName);
         return;
       }
 
+      const html = renderCvPdfHtml(documentModel);
       sendHtml(res, 200, html);
       return;
     }
@@ -4212,13 +4459,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const html = renderIeeePdfHtml(documentModel);
       if (isPdfExport) {
-        const pdf = await renderPdfBuffer(html);
+        const pdf = await renderIeeePdfBuffer(documentModel);
         sendPdf(res, 200, pdf, documentModel.fileName);
         return;
       }
 
+      const html = renderIeeePdfHtml(documentModel);
       sendHtml(res, 200, html);
       return;
     }
