@@ -574,72 +574,31 @@ function downloadDataUrl(dataUrl, fileName) {
 
 function openBrowserPrintFallback(html) {
   return new Promise((resolve, reject) => {
-    const iframe = document.createElement("iframe");
-    const blob = new Blob([String(html || "")], { type: "text/html" });
-    const blobUrl = URL.createObjectURL(blob);
-    let settled = false;
+    try {
+      const printWindow = window.open("", "_blank");
 
-    const cleanup = () => {
-      if (iframe.parentNode) {
-        iframe.remove();
-      }
-      URL.revokeObjectURL(blobUrl);
-    };
-
-    const finish = () => {
-      if (settled) {
+      if (!printWindow) {
+        reject(new Error("Popup blocked"));
         return;
       }
-      settled = true;
-      cleanup();
-      resolve();
-    };
 
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "1px";
-    iframe.style.height = "1px";
-    iframe.style.opacity = "0";
-    iframe.style.pointerEvents = "none";
-    iframe.onload = () => {
-      try {
-        const printWindow = iframe.contentWindow;
-        if (!printWindow) {
-          throw new Error("Print preview could not open.");
-        }
-        if ("onafterprint" in printWindow) {
-          printWindow.onafterprint = () => window.setTimeout(finish, 120);
-        }
-        printWindow.focus();
-        window.setTimeout(() => {
-          try {
-            printWindow.print();
-          } catch (error) {
-            cleanup();
-            reject(error);
-            return;
-          }
-          notify(
-            uiWord("Print dialog opened. Choose Save as PDF in your browser.", "تم فتح نافذة الطباعة. اختر الحفظ كملف PDF من المتصفح."),
-            "info"
-          );
-          if (!("onafterprint" in printWindow)) {
-            window.setTimeout(finish, 1500);
-          }
-        }, 120);
-      } catch (error) {
-        cleanup();
-        reject(error);
-      }
-    };
-    iframe.onerror = () => {
-      cleanup();
-      reject(new Error("Print preview could not open."));
-    };
+      printWindow.document.open();
+      printWindow.document.write(String(html || ""));
+      printWindow.document.close();
 
-    document.body.appendChild(iframe);
-    iframe.src = blobUrl;
+      printWindow.focus();
+
+      setTimeout(() => {
+        try {
+          printWindow.print();
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      }, 300);
+    } catch (error) {
+      reject(error);
+    }
   });
 }
 
