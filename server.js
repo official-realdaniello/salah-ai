@@ -193,6 +193,7 @@ const CONTENT_SECURITY_POLICY = [
   "img-src 'self' data: blob:",
   "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:",
   "connect-src 'self'",
+  "frame-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
