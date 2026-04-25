@@ -997,10 +997,13 @@ function generateIeeeFromForm(options = {}) {
   return state.ieee.generated;
 }
 
-async function fetchIeeePrintableHtml(documentModel) {
-  const response = await fetch("/api/ieee-print", {
+async function fetchIeeePdfBlob(documentModel) {
+  const response = await fetch("/api/ieee-pdf", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/pdf"
+    },
     body: JSON.stringify({
       document: documentModel,
       fileName: documentModel.fileName
@@ -1008,7 +1011,7 @@ async function fetchIeeePrintableHtml(documentModel) {
   });
 
   if (!response.ok) {
-    let errorMessage = "IEEE paper print export failed.";
+    let errorMessage = "IEEE paper PDF export failed.";
     try {
       const payload = await response.json();
       errorMessage = payload.error || errorMessage;
@@ -1016,7 +1019,7 @@ async function fetchIeeePrintableHtml(documentModel) {
     throw new Error(errorMessage);
   }
 
-  return response.text();
+  return response.blob();
 }
 
 async function handleIeeeDownload(mode) {
@@ -1037,19 +1040,19 @@ async function handleIeeeDownload(mode) {
   renderApp();
   try {
     if (mode === "full" && full) {
-      await openBrowserPrintFallback(await fetchIeeePrintableHtml(full));
+      downloadBlob(await fetchIeeePdfBlob(full), full.fileName);
       return;
     }
     if (mode === "anonymous" && anonymous) {
-      await openBrowserPrintFallback(await fetchIeeePrintableHtml(anonymous));
+      downloadBlob(await fetchIeeePdfBlob(anonymous), anonymous.fileName);
       return;
     }
     if (full) {
-      await openBrowserPrintFallback(await fetchIeeePrintableHtml(full));
+      downloadBlob(await fetchIeeePdfBlob(full), full.fileName);
     }
     if (anonymous) {
       await new Promise((resolve) => setTimeout(resolve, 180));
-      await openBrowserPrintFallback(await fetchIeeePrintableHtml(anonymous));
+      downloadBlob(await fetchIeeePdfBlob(anonymous), anonymous.fileName);
     }
   } catch (error) {
     alertError(error);

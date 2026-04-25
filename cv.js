@@ -1123,10 +1123,13 @@ function generateCvFromForm(options) {
   return nextDocument;
 }
 
-async function fetchCvPrintableHtml(documentModel) {
-  const response = await fetch("/api/cv-print", {
+async function fetchCvPdfBlob(documentModel) {
+  const response = await fetch("/api/cv-pdf", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/pdf"
+    },
     body: JSON.stringify({
       document: documentModel,
       fileName: documentModel.fileName
@@ -1134,7 +1137,7 @@ async function fetchCvPrintableHtml(documentModel) {
   });
 
   if (!response.ok) {
-    let errorMessage = "CV print export failed.";
+    let errorMessage = "CV PDF export failed.";
     try {
       const payload = await response.json();
       errorMessage = payload.error || errorMessage;
@@ -1142,7 +1145,7 @@ async function fetchCvPrintableHtml(documentModel) {
     throw new Error(errorMessage);
   }
 
-  return response.text();
+  return response.blob();
 }
 
 async function handleCvDownload() {
@@ -1154,8 +1157,8 @@ async function handleCvDownload() {
   runtime.busy.cv = true;
   renderApp();
   try {
-    const html = await fetchCvPrintableHtml(documentModel);
-    await openBrowserPrintFallback(html);
+    const pdfBlob = await fetchCvPdfBlob(documentModel);
+    downloadBlob(pdfBlob, documentModel.fileName);
   } catch (error) {
     alertError(error);
   } finally {

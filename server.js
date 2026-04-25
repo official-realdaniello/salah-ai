@@ -7,6 +7,7 @@ const zlib = require("zlib");
 const { URL } = require("url");
 
 const ROOT = __dirname;
+let puppeteerModule = null;
 loadLocalEnv(path.join(ROOT, ".env"));
 
 function escapeRegExp(value) {
@@ -817,6 +818,85 @@ function sendHtml(res, statusCode, payload) {
     "X-Content-Type-Options": "nosniff"
   });
   res.end(payload);
+}
+
+function contentDispositionAttachment(fileName, fallback = "document.pdf") {
+  const cleaned = sanitizeString(fileName, 180)
+    .replace(/[\r\n"]/g, "")
+    .replace(/[\\/]+/g, "-")
+    || fallback;
+  const asciiFallback = cleaned
+    .normalize("NFKD")
+    .replace(/[^\x20-\x7E]+/g, "")
+    .replace(/["\\]/g, "")
+    .trim()
+    || fallback;
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(cleaned)}`;
+}
+
+function sendPdf(res, statusCode, payload, fileName) {
+  res.writeHead(statusCode, {
+    "Content-Type": "application/pdf",
+    "Content-Disposition": contentDispositionAttachment(fileName),
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Length": payload.length
+  });
+  res.end(payload);
+}
+
+function getPuppeteer() {
+  if (!puppeteerModule) {
+    puppeteerModule = require("puppeteer");
+  }
+  return puppeteerModule;
+}
+
+function chromeExecutablePath() {
+  return (
+    sanitizeString(process.env.PUPPETEER_EXECUTABLE_PATH, 1000)
+    || sanitizeString(process.env.CHROME_PATH, 1000)
+    || sanitizeString(process.env.GOOGLE_CHROME_BIN, 1000)
+  );
+}
+
+async function renderPdfBuffer(html) {
+  const puppeteer = getPuppeteer();
+  const executablePath = chromeExecutablePath();
+  let browser;
+
+  try {
+    browser = await puppeteer.launch({
+      ...(executablePath ? { executablePath } : {}),
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--font-render-hinting=none"
+      ]
+    });
+
+    const page = await browser.newPage();
+    await page.emulateMediaType("print");
+    await page.setContent(String(html || ""), {
+      waitUntil: ["load", "networkidle0"],
+      timeout: 30000
+    });
+    await page.evaluate(() => document.fonts?.ready).catch(() => {});
+
+    const pdf = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      preferCSSPageSize: true,
+      timeout: 30000
+    });
+    return Buffer.from(pdf);
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
 }
 
 function sanitizeModel(value, fallback) {
@@ -4091,10 +4171,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/cv-print") {
+    if (req.method === "POST" && (requestUrl.pathname === "/api/cv-print" || requestUrl.pathname === "/api/cv-pdf")) {
       assertTrustedBrowserOrigin(req);
       assertJsonRequest(req);
-      enforceRateLimit(req, "cv-print", { limit: 20, windowMs: 5 * 60 * 1000 });
+      const isPdfExport = requestUrl.pathname === "/api/cv-pdf";
+      enforceRateLimit(req, isPdfExport ? "cv-pdf" : "cv-print", { limit: 20, windowMs: 5 * 60 * 1000 });
       const body = await readJsonBody(req);
       const documentModel = sanitizeCvDocument(body.document);
       if (!documentModel.name && !documentModel.professionalTitle && !documentModel.contactLines.length && !documentModel.linkLines.length && !documentModel.sections.length) {
@@ -4106,14 +4187,21 @@ const server = http.createServer(async (req, res) => {
       }
 
       const html = renderCvPdfHtml(documentModel);
+      if (isPdfExport) {
+        const pdf = await renderPdfBuffer(html);
+        sendPdf(res, 200, pdf, documentModel.fileName);
+        return;
+      }
+
       sendHtml(res, 200, html);
       return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/ieee-print") {
+    if (req.method === "POST" && (requestUrl.pathname === "/api/ieee-print" || requestUrl.pathname === "/api/ieee-pdf")) {
       assertTrustedBrowserOrigin(req);
       assertJsonRequest(req);
-      enforceRateLimit(req, "ieee-print", { limit: 20, windowMs: 5 * 60 * 1000 });
+      const isPdfExport = requestUrl.pathname === "/api/ieee-pdf";
+      enforceRateLimit(req, isPdfExport ? "ieee-pdf" : "ieee-print", { limit: 20, windowMs: 5 * 60 * 1000 });
       const body = await readJsonBody(req);
       const documentModel = sanitizeIeeeDocument(body.document);
       if (!documentModel.hasContent) {
@@ -4125,6 +4213,12 @@ const server = http.createServer(async (req, res) => {
       }
 
       const html = renderIeeePdfHtml(documentModel);
+      if (isPdfExport) {
+        const pdf = await renderPdfBuffer(html);
+        sendPdf(res, 200, pdf, documentModel.fileName);
+        return;
+      }
+
       sendHtml(res, 200, html);
       return;
     }
