@@ -582,72 +582,41 @@ function shouldUseBrowserPrintFallback(error) {
 
 function openBrowserPrintFallback(html) {
   return new Promise((resolve, reject) => {
-    const iframe = document.createElement("iframe");
-    const blob = new Blob([String(html || "")], { type: "text/html" });
-    const blobUrl = URL.createObjectURL(blob);
-    let settled = false;
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      reject(new Error(uiWord("Allow pop-ups to export PDF from your browser.", "يرجى السماح بالنوافذ المنبثقة لتصدير PDF من المتصفح.")));
+      return;
+    }
 
-    const cleanup = () => {
-      if (iframe.parentNode) {
-        iframe.remove();
-      }
-      URL.revokeObjectURL(blobUrl);
-    };
+    try {
+      printWindow.document.open();
+      printWindow.document.write(String(html || ""));
+      printWindow.document.close();
+    } catch (error) {
+      reject(error);
+      return;
+    }
 
-    const finish = () => {
-      if (settled) {
+    const finish = () => resolve();
+    window.setTimeout(() => {
+      try {
+        printWindow.focus();
+        printWindow.print();
+      } catch {
+        notify(
+          uiWord("Printable page opened. Use your browser print menu and choose Save as PDF.", "تم فتح صفحة قابلة للطباعة. استخدم قائمة الطباعة في المتصفح واختر حفظ كملف PDF."),
+          "warning"
+        );
+        finish();
         return;
       }
-      settled = true;
-      cleanup();
-      resolve();
-    };
 
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "1px";
-    iframe.style.height = "1px";
-    iframe.style.opacity = "0";
-    iframe.style.pointerEvents = "none";
-    iframe.onload = () => {
-      try {
-        const printWindow = iframe.contentWindow;
-        if (!printWindow) {
-          throw new Error("Print preview could not open.");
-        }
-        if ("onafterprint" in printWindow) {
-          printWindow.onafterprint = () => window.setTimeout(finish, 120);
-        }
-        printWindow.focus();
-        window.setTimeout(() => {
-          try {
-            printWindow.print();
-          } catch (error) {
-            cleanup();
-            reject(error);
-            return;
-          }
-          notify(
-            uiWord("Print dialog opened. Choose Save as PDF in your browser.", "تم فتح نافذة الطباعة. اختر الحفظ كملف PDF من المتصفح."),
-            "info"
-          );
-          if (!("onafterprint" in printWindow)) {
-            window.setTimeout(finish, 1500);
-          }
-        }, 120);
-      } catch (error) {
-        cleanup();
-        reject(error);
-      }
-    };
-    iframe.onerror = () => {
-      cleanup();
-      reject(new Error("Print preview could not open."));
-    };
-
-    document.body.appendChild(iframe);
-    iframe.src = blobUrl;
+      notify(
+        uiWord("Print dialog opened. Choose Save as PDF in your browser.", "تم فتح نافذة الطباعة. اختر الحفظ كملف PDF من المتصفح."),
+        "info"
+      );
+      finish();
+    }, 180);
   });
 }
 
