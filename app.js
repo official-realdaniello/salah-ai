@@ -7,6 +7,7 @@ const LEGACY_ACTIVE_PROFILE_KEY = "salah-ai-active-profile-v1";
 const LEGACY_PROFILE_STORAGE_PREFIX = "salah-ai-profile-v1:";
 const DEVICE_PROFILE_ID_KEY = "salah-ai-device-profile-id-v1";
 const DEVICE_PROFILE_STORAGE_PREFIX = "salah-ai-device-profile-v1:";
+const PRINT_DOCUMENT_STORAGE_PREFIX = "salah-ai-print-document-v1:";
 const CHAT_STORAGE_MESSAGE_LIMIT = 120;
 const TUTOR_REQUEST_HISTORY_LIMIT = 40;
 const CODING_REQUEST_HISTORY_LIMIT = 32;
@@ -580,38 +581,37 @@ function shouldUseBrowserPrintFallback(error) {
     || /\bchromium-based browser\b/i.test(message);
 }
 
-function withAutoPrintScript(html) {
-  const printableHtml = String(html || "");
-  const printScript = `
-<script>
-window.addEventListener("load", function handlePrintableLoad() {
-  window.setTimeout(function triggerPrint() {
-    try {
-      window.focus();
-      window.print();
-    } catch {}
-  }, 120);
-}, { once: true });
-</script>`;
-  if (/<\/body>/i.test(printableHtml)) {
-    return printableHtml.replace(/<\/body>/i, `${printScript}\n</body>`);
-  }
-  return `${printableHtml}${printScript}`;
-}
-
 function openBrowserPrintFallback(html) {
   return new Promise((resolve, reject) => {
-    const printBlob = new Blob([withAutoPrintScript(html)], { type: "text/html;charset=utf-8" });
-    const printUrl = URL.createObjectURL(printBlob);
-    const printWindow = window.open(printUrl, "_blank");
-    if (!printWindow) {
-      URL.revokeObjectURL(printUrl);
-      reject(new Error(uiWord("Allow pop-ups to export PDF from your browser.", "يرجى السماح بالنوافذ المنبثقة لتصدير PDF من المتصفح.")));
+    const printableHtml = String(html || "").trim();
+    if (!printableHtml) {
+      reject(new Error(uiWord("Printable document could not be prepared.", "تعذر تجهيز المستند القابل للطباعة.")));
       return;
     }
+
+    const storageKey = `${PRINT_DOCUMENT_STORAGE_PREFIX}${makeId("print")}`;
+    try {
+      localStorage.setItem(storageKey, printableHtml);
+    } catch {
+      reject(new Error(uiWord("This browser could not prepare the printable document.", "تعذر على هذا المتصفح تجهيز المستند القابل للطباعة.")));
+      return;
+    }
+
+    const printUrl = `print-shell.html?key=${encodeURIComponent(storageKey)}`;
+    const anchor = document.createElement("a");
+    anchor.href = printUrl;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+
     window.setTimeout(() => {
-      URL.revokeObjectURL(printUrl);
-    }, 60_000);
+      try {
+        localStorage.removeItem(storageKey);
+      } catch {}
+    }, 5 * 60 * 1000);
+
     notify(
       uiWord("Printable page opened. If the print dialog does not appear, use your browser print menu and choose Save as PDF.", "تم فتح صفحة قابلة للطباعة. إذا لم تظهر نافذة الطباعة، استخدم قائمة الطباعة في المتصفح واختر حفظ كملف PDF."),
       "info"

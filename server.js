@@ -172,11 +172,13 @@ const PUBLIC_ASSET_FILES = new Set([
   "planner.html",
   "exam.html",
   "progress.html",
+  "print-shell.html",
   "styles.css",
   "bootstrap.js",
   "cv.js",
   "ieee.js",
   "app.js",
+  "print-shell.js",
   "favicon.svg",
   "palestine.svg",
   "us.svg"
