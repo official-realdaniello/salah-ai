@@ -827,7 +827,7 @@ function resolvePdfRendererMode() {
   if (value === "prince" || value === "browser") {
     return value;
   }
-  return "auto";
+  return "browser";
 }
 
 function isRenderRuntime() {
@@ -979,8 +979,28 @@ async function resolvePdfBrowserPath() {
   return commandCandidates.find(Boolean) || "";
 }
 
+function resolvePrinceLicenseFilePath() {
+  return existingFilePath(process.env.SALAH_AI_PDF_PRINCE_LICENSE_FILE);
+}
+
+function resolvePrinceLicenseKey() {
+  return sanitizeString(process.env.SALAH_AI_PDF_PRINCE_LICENSE_KEY, 12000);
+}
+
 async function renderPdfWithPrince(princePath, htmlPath, pdfPath) {
-  await execFileAsync(princePath, [htmlPath, "-o", pdfPath], {
+  const args = [];
+  const licenseFile = resolvePrinceLicenseFilePath();
+  const licenseKey = resolvePrinceLicenseKey();
+
+  if (licenseFile) {
+    args.push(`--license-file=${licenseFile}`);
+  }
+  if (licenseKey) {
+    args.push(`--license-key=${licenseKey}`);
+  }
+  args.push(htmlPath, "-o", pdfPath);
+
+  await execFileAsync(princePath, args, {
     windowsHide: true,
     timeout: 60000
   });
@@ -989,6 +1009,9 @@ async function renderPdfWithPrince(princePath, htmlPath, pdfPath) {
 async function renderPdfWithBrowser(browserPath, htmlPath, pdfPath) {
   const fileUrl = pathToFileURL(htmlPath).toString();
   const baseArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
     "--disable-gpu",
     "--run-all-compositor-stages-before-draw",
     "--disable-print-preview",
@@ -1018,9 +1041,7 @@ async function renderPdfFromHtml(html, preferredFileName = "resume.pdf") {
     const mode = resolvePdfRendererMode();
     const rendererOrder = mode === "prince"
       ? ["prince", "browser"]
-      : mode === "browser"
-        ? ["browser", "prince"]
-        : (isRenderRuntime() ? ["prince", "browser"] : ["browser", "prince"]);
+      : ["browser", "prince"];
 
     for (const renderer of rendererOrder) {
       try {
