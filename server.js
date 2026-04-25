@@ -824,19 +824,10 @@ function existingFilePath(candidate) {
 
 function resolvePdfRendererMode() {
   const value = sanitizeString(process.env.SALAH_AI_PDF_RENDERER, 20).toLowerCase();
-  if (value === "prince" || value === "browser") {
+  if (value === "browser") {
     return value;
   }
   return "browser";
-}
-
-function isRenderRuntime() {
-  return Boolean(
-    sanitizeString(process.env.RENDER, 20)
-    || sanitizeString(process.env.RENDER_SERVICE_ID, 120)
-    || sanitizeString(process.env.RENDER_EXTERNAL_URL, 600)
-    || sanitizeString(process.env.RENDER_EXTERNAL_HOSTNAME, 200)
-  );
 }
 
 async function resolveExecutableCandidates(command, args = []) {
@@ -852,55 +843,6 @@ async function resolveExecutableCandidates(command, args = []) {
   } catch {
     return [];
   }
-}
-
-async function resolvePrincePath() {
-  const explicitPath = existingFilePath(process.env.SALAH_AI_PDF_PRINCE_PATH);
-  if (explicitPath) {
-    return explicitPath;
-  }
-
-  const installRoots = Array.from(new Set([
-    process.env.ProgramFiles,
-    process.env["ProgramFiles(x86)"],
-    process.env.ProgramW6432
-  ].map((value) => sanitizeString(value, 260)).filter(Boolean)));
-
-  const windowsCandidates = installRoots.flatMap((rootPath) => [
-    path.join(rootPath, "Prince", "Engine", "bin", "prince.exe"),
-    path.join(rootPath, "Prince", "Engine", "bin", "prince-xml.exe")
-  ]);
-  const macCandidates = [
-    "/usr/local/bin/prince",
-    "/opt/homebrew/bin/prince",
-    "/Applications/Prince.app/Contents/MacOS/prince"
-  ];
-  const linuxCandidates = [
-    "/usr/bin/prince",
-    "/usr/local/bin/prince"
-  ];
-
-  const fixedCandidate = Array.from(new Set([
-    ...windowsCandidates,
-    ...macCandidates,
-    ...linuxCandidates
-  ]))
-    .map(existingFilePath)
-    .find(Boolean);
-  if (fixedCandidate) {
-    return fixedCandidate;
-  }
-
-  const commandCandidates = process.platform === "win32"
-    ? [
-        ...await resolveExecutableCandidates("where.exe", ["prince.exe"]),
-        ...await resolveExecutableCandidates("where.exe", ["prince"])
-      ]
-    : [
-        ...await resolveExecutableCandidates("which", ["prince"])
-      ];
-
-  return commandCandidates.find(Boolean) || "";
 }
 
 async function resolvePdfBrowserPath() {
@@ -979,33 +921,6 @@ async function resolvePdfBrowserPath() {
   return commandCandidates.find(Boolean) || "";
 }
 
-function resolvePrinceLicenseFilePath() {
-  return existingFilePath(process.env.SALAH_AI_PDF_PRINCE_LICENSE_FILE);
-}
-
-function resolvePrinceLicenseKey() {
-  return sanitizeString(process.env.SALAH_AI_PDF_PRINCE_LICENSE_KEY, 12000);
-}
-
-async function renderPdfWithPrince(princePath, htmlPath, pdfPath) {
-  const args = [];
-  const licenseFile = resolvePrinceLicenseFilePath();
-  const licenseKey = resolvePrinceLicenseKey();
-
-  if (licenseFile) {
-    args.push(`--license-file=${licenseFile}`);
-  }
-  if (licenseKey) {
-    args.push(`--license-key=${licenseKey}`);
-  }
-  args.push(htmlPath, "-o", pdfPath);
-
-  await execFileAsync(princePath, args, {
-    windowsHide: true,
-    timeout: 60000
-  });
-}
-
 async function renderPdfWithBrowser(browserPath, htmlPath, pdfPath) {
   const fileUrl = pathToFileURL(htmlPath).toString();
   const baseArgs = [
@@ -1037,49 +952,39 @@ async function renderPdfFromHtml(html, preferredFileName = "resume.pdf") {
   fs.writeFileSync(htmlPath, html, "utf8");
 
   try {
-    const errors = [];
     const mode = resolvePdfRendererMode();
-    const rendererOrder = mode === "prince"
-      ? ["prince", "browser"]
-      : ["browser", "prince"];
-
-    for (const renderer of rendererOrder) {
-      try {
-        if (fs.existsSync(pdfPath)) {
-          fs.rmSync(pdfPath, { force: true });
-        }
-
-        if (renderer === "prince") {
-          const princePath = await resolvePrincePath();
-          if (!princePath) {
-            errors.push("Prince renderer was not found");
-            continue;
-          }
-          await renderPdfWithPrince(princePath, htmlPath, pdfPath);
-        } else {
-          const browserPath = await resolvePdfBrowserPath();
-          if (!browserPath) {
-            errors.push("Chromium browser renderer was not found");
-            continue;
-          }
-          await renderPdfWithBrowser(browserPath, htmlPath, pdfPath);
-        }
-
-        if (!fs.existsSync(pdfPath)) {
-          errors.push(`${renderer} renderer finished without creating a PDF file`);
-          continue;
-        }
-
-        return fs.readFileSync(pdfPath);
-      } catch (error) {
-        errors.push(`${renderer} renderer failed: ${error.message}`);
-      }
+    if (mode !== "browser") {
+      const error = new Error("Only the browser PDF renderer is supported.");
+      error.statusCode = 500;
+      throw error;
     }
 
-    const guidance = "Install PrinceXML or install Chrome/Edge/Brave/Chromium/Vivaldi, or configure SALAH_AI_PDF_PRINCE_PATH / SALAH_AI_PDF_BROWSER_PATH.";
-    const error = new Error(`PDF export failed. ${errors.join(" | ")}. ${guidance}`);
-    error.statusCode = 503;
-    throw error;
+    if (fs.existsSync(pdfPath)) {
+      fs.rmSync(pdfPath, { force: true });
+    }
+
+    const browserPath = await resolvePdfBrowserPath();
+    if (!browserPath) {
+      const error = new Error("PDF export failed. Chromium browser renderer was not found. Install Chrome/Edge/Brave/Chromium/Vivaldi, or configure SALAH_AI_PDF_BROWSER_PATH.");
+      error.statusCode = 503;
+      throw error;
+    }
+
+    try {
+      await renderPdfWithBrowser(browserPath, htmlPath, pdfPath);
+    } catch (renderError) {
+      const error = new Error(`PDF export failed. browser renderer failed: ${renderError.message}. Install Chrome/Edge/Brave/Chromium/Vivaldi, or configure SALAH_AI_PDF_BROWSER_PATH.`);
+      error.statusCode = 503;
+      throw error;
+    }
+
+    if (!fs.existsSync(pdfPath)) {
+      const error = new Error("PDF export failed. Browser renderer finished without creating a PDF file.");
+      error.statusCode = 503;
+      throw error;
+    }
+
+    return fs.readFileSync(pdfPath);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
