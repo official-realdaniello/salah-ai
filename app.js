@@ -580,43 +580,43 @@ function shouldUseBrowserPrintFallback(error) {
     || /\bchromium-based browser\b/i.test(message);
 }
 
+function withAutoPrintScript(html) {
+  const printableHtml = String(html || "");
+  const printScript = `
+<script>
+window.addEventListener("load", function handlePrintableLoad() {
+  window.setTimeout(function triggerPrint() {
+    try {
+      window.focus();
+      window.print();
+    } catch {}
+  }, 120);
+}, { once: true });
+</script>`;
+  if (/<\/body>/i.test(printableHtml)) {
+    return printableHtml.replace(/<\/body>/i, `${printScript}\n</body>`);
+  }
+  return `${printableHtml}${printScript}`;
+}
+
 function openBrowserPrintFallback(html) {
   return new Promise((resolve, reject) => {
-    const printWindow = window.open("", "_blank");
+    const printBlob = new Blob([withAutoPrintScript(html)], { type: "text/html;charset=utf-8" });
+    const printUrl = URL.createObjectURL(printBlob);
+    const printWindow = window.open(printUrl, "_blank");
     if (!printWindow) {
+      URL.revokeObjectURL(printUrl);
       reject(new Error(uiWord("Allow pop-ups to export PDF from your browser.", "يرجى السماح بالنوافذ المنبثقة لتصدير PDF من المتصفح.")));
       return;
     }
-
-    try {
-      printWindow.document.open();
-      printWindow.document.write(String(html || ""));
-      printWindow.document.close();
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    const finish = () => resolve();
     window.setTimeout(() => {
-      try {
-        printWindow.focus();
-        printWindow.print();
-      } catch {
-        notify(
-          uiWord("Printable page opened. Use your browser print menu and choose Save as PDF.", "تم فتح صفحة قابلة للطباعة. استخدم قائمة الطباعة في المتصفح واختر حفظ كملف PDF."),
-          "warning"
-        );
-        finish();
-        return;
-      }
-
-      notify(
-        uiWord("Print dialog opened. Choose Save as PDF in your browser.", "تم فتح نافذة الطباعة. اختر الحفظ كملف PDF من المتصفح."),
-        "info"
-      );
-      finish();
-    }, 180);
+      URL.revokeObjectURL(printUrl);
+    }, 60_000);
+    notify(
+      uiWord("Printable page opened. If the print dialog does not appear, use your browser print menu and choose Save as PDF.", "تم فتح صفحة قابلة للطباعة. إذا لم تظهر نافذة الطباعة، استخدم قائمة الطباعة في المتصفح واختر حفظ كملف PDF."),
+      "info"
+    );
+    resolve();
   });
 }
 
