@@ -575,27 +575,42 @@ function downloadDataUrl(dataUrl, fileName) {
 function openBrowserPrintFallback(html) {
   return new Promise((resolve, reject) => {
     try {
-      const printWindow = window.open("", "_blank");
+      // Create a blob URL instead of using data URL to avoid cross-origin issues
+      const blob = new Blob([String(html || "")], { type: "text/html" });
+      const blobUrl = URL.createObjectURL(blob);
+      
+      const printWindow = window.open(blobUrl, "_blank");
 
       if (!printWindow) {
+        URL.revokeObjectURL(blobUrl);
         reject(new Error("Popup blocked"));
         return;
       }
 
-      printWindow.document.open();
-      printWindow.document.write(String(html || ""));
-      printWindow.document.close();
-
-      printWindow.focus();
-
-      setTimeout(() => {
-        try {
-          printWindow.print();
-          resolve();
-        } catch (err) {
-          reject(err);
-        }
-      }, 300);
+      // Clean up the blob URL after the window loads
+      printWindow.addEventListener("load", function onLoad() {
+        printWindow.removeEventListener("load", onLoad);
+        URL.revokeObjectURL(blobUrl);
+        
+        // Focus and print after content is loaded
+        printWindow.focus();
+        
+        // Use a shorter timeout to ensure DOM is ready
+        setTimeout(() => {
+          try {
+            printWindow.print();
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        }, 100);
+      });
+      
+      printWindow.addEventListener("error", function onError() {
+        printWindow.removeEventListener("error", onError);
+        URL.revokeObjectURL(blobUrl);
+        reject(new Error("Failed to load print preview"));
+      });
     } catch (error) {
       reject(error);
     }

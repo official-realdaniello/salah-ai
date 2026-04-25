@@ -188,8 +188,8 @@ const STATIC_CACHE_CONTROL_BY_EXTENSION = {
 };
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com",
+  "script-src 'self' 'unsafe-inline'",  // Added 'unsafe-inline' for the printed document
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com",
   "img-src 'self' data: blob:",
   "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:",
   "connect-src 'self'",
